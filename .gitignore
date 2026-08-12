@@ -1,0 +1,9 @@
+.DS_Store
+.hallmark/
+.playwright-cli/
+sample/
+assets/
+*.png
+*.jpg
+*.jpeg
+*.pdf

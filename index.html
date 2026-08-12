@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="一款本地运行的模块化简历排版与 PDF 输出工具。" />
+    <title>简历排版工作台</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23984936'/%3E%3Cpath d='M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260812-pixel-monochrome-v3-1" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">跳到编辑区</a>
+
+    <header class="topbar">
+      <div class="brand-block" aria-label="简历排版工作台">
+        <span class="brand-mark dot-field" aria-hidden="true"></span>
+        <div>
+          <strong>简历排版工作台</strong>
+          <span id="saveState" class="save-state" aria-live="polite">已保存在本机</span>
+        </div>
+      </div>
+      <div class="topbar-mode" aria-label="当前工作模式">
+        <span class="topbar-mode__word">EDIT</span>
+        <span class="topbar-mode__meta">本地排版 · A4 输出</span>
+      </div>
+      <button class="button button--primary" id="exportButton" type="button">导出</button>
+    </header>
+
+    <main id="workspace" class="workbench">
+      <aside class="panel source-panel" aria-labelledby="sourceHeading">
+        <div class="panel-heading">
+          <span class="panel-index" aria-hidden="true">01 / MATCH</span>
+          <h1 id="sourceHeading">简历与岗位</h1>
+          <p>上传、匹配和初步优化都在当前页面完成。</p>
+        </div>
+
+        <div class="field-group">
+          <label for="resumeFile">上传现有简历</label>
+          <div class="file-drop" id="fileDrop">
+            <input id="resumeFile" type="file" accept=".pdf,.txt,text/plain,application/pdf" />
+            <span class="file-drop__title">选择 PDF 或 TXT</span>
+            <span class="file-drop__meta" id="fileStatus">支持文字型 PDF；扫描件需先识别文字</span>
+          </div>
+        </div>
+
+        <details class="source-text-details">
+          <summary>查看或粘贴简历原文</summary>
+          <div class="field-group">
+            <label for="resumeText">简历原文</label>
+            <textarea id="resumeText" rows="8" placeholder="上传文件后会自动填入，也可以直接粘贴。"></textarea>
+          </div>
+        </details>
+
+        <div class="field-group">
+          <label for="jobText">招聘需求</label>
+          <textarea id="jobText" rows="6" placeholder="粘贴岗位职责、任职要求和加分项。"></textarea>
+        </div>
+
+        <section class="local-optimizer" aria-labelledby="localOptimizerHeading">
+          <div class="local-optimizer__heading">
+            <div>
+              <h2 id="localOptimizerHeading">本页快速优化</h2>
+              <p>先做岗位匹配、排序和密度检查，不改动事实。</p>
+            </div>
+            <span class="local-badge">本地</span>
+          </div>
+          <div class="keyword-preview" id="keywordPreview" aria-label="岗位关键词"></div>
+          <p class="optimizer-status" id="localOptimizeStatus" aria-live="polite">粘贴招聘需求后，即可直接优化。</p>
+          <button class="button button--primary button--wide" id="localOptimizeButton" type="button">生成匹配简历</button>
+          <button class="text-action" id="gptFlowButton" type="button">需要深度改写时使用 GPT（可选）</button>
+        </section>
+      </aside>
+
+      <section class="preview-stage" aria-labelledby="previewHeading">
+        <div class="stage-signal" aria-hidden="true">
+          <span>CV</span>
+          <i class="dot-field"></i>
+        </div>
+        <div class="preview-toolbar">
+          <div>
+            <span class="panel-index" aria-hidden="true">02 / BUILD</span>
+            <h2 id="previewHeading">A4 简历</h2>
+            <p class="toolbar-note">版式结构与颜色可分别调整</p>
+          </div>
+          <div class="preview-controls" aria-label="预览设置">
+            <label for="fontScale">字号</label>
+            <select id="fontScale">
+              <option value="0.92">紧凑</option>
+              <option value="1" selected>标准</option>
+              <option value="1.08">大字</option>
+            </select>
+            <label for="density">间距</label>
+            <select id="density">
+              <option value="compact">紧凑</option>
+              <option value="comfortable" selected>舒展</option>
+            </select>
+          </div>
+        </div>
+        <div class="page-indicator" id="pageIndicator">预计 1 页</div>
+        <div class="paper-viewport">
+          <article id="resumePrintRoot" class="resume-sheet" aria-label="简历打印预览"></article>
+          <div class="pixel-generate" id="pixelGenerate" aria-hidden="true" hidden>
+            <div class="pixel-generate__status"><strong id="pixelGenerateTitle">正在生成简历</strong><span id="pixelGenerateStatus">分析岗位与重排内容</span></div>
+            <div class="pixel-generate__grid" id="pixelGenerateGrid"></div>
+          </div>
+          <aside class="job-tips-card" id="jobTipsCard" aria-labelledby="jobTipsHeading">
+            <button class="job-tips-card__toggle" id="jobTipsToggle" type="button" aria-expanded="false">
+              <span><strong id="jobTipsHeading">面试准备</strong><small id="jobTipsCount">等待岗位分析</small></span>
+              <span class="job-tips-card__chevron" aria-hidden="true">＋</span>
+            </button>
+            <div class="job-tips-card__body" id="jobTipsBody" hidden>
+              <p class="job-tips-card__note">带下划线的词语是通用参考，可替换成你的真实情况；标有“虚构示例”的场景不能直接当作个人经历使用。</p>
+              <div id="jobTipsContent" class="job-tips-content"></div>
+              <button class="text-action" id="refreshTipsButton" type="button">根据当前岗位更新准备清单</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <aside class="panel module-panel" aria-labelledby="moduleHeading">
+        <div class="panel-heading panel-heading--row">
+          <div>
+            <span class="panel-index" aria-hidden="true">03 / EDIT</span>
+            <h2 id="moduleHeading">选择、重排、改写</h2>
+          </div>
+          <button class="button button--quiet" id="resetButton" type="button">清空内容</button>
+        </div>
+
+        <section class="layout-editor" aria-labelledby="layoutHeading">
+          <h3 id="layoutHeading">版式设置</h3>
+          <div class="spec-list">
+            <div class="spec-row">
+              <div>
+                <strong>简历风格</strong>
+                <span>改变信息区块的结构</span>
+              </div>
+              <select id="resumeStyle" aria-label="简历风格">
+                <option value="classic">专业标准</option>
+                <option value="sidebar">创意侧栏</option>
+                <option value="compact">紧凑一页</option>
+              </select>
+            </div>
+            <div class="spec-row">
+              <div>
+                <strong>重点色搭配</strong>
+                <span>主色 + 少量辅助色</span>
+              </div>
+              <div class="palette-control">
+                <span class="palette-swatches" id="paletteSwatches" aria-hidden="true"><i></i><i></i></span>
+                <select id="resumePalette" aria-label="重点色搭配">
+                  <option value="coffee">咖啡棕 + 焦糖</option>
+                  <option value="cobalt">深蓝 + 琥珀</option>
+                  <option value="graphite">石墨灰 + 陶土</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="basics-editor" aria-labelledby="basicsHeading">
+          <h3 id="basicsHeading">基本信息</h3>
+          <div class="avatar-editor">
+            <button class="avatar-editor__preview" id="avatarPreview" type="button" aria-label="插入头像"><span>点击插入头像</span></button>
+            <div class="avatar-editor__controls">
+              <div class="inline-actions inline-actions--start">
+                <button class="button button--secondary" id="avatarUploadButton" type="button">选择头像</button>
+                <input id="avatarUpload" class="visually-hidden" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" />
+                <button class="button button--quiet" id="removeAvatarButton" type="button">移除</button>
+              </div>
+              <p class="field-hint avatar-status" id="avatarStatus" aria-live="polite">支持 JPG、PNG、WebP，点击左侧头像区也可选择。</p>
+              <label for="avatarShape">头像形状</label>
+              <select id="avatarShape">
+                <option value="circle">圆形</option>
+                <option value="rounded">圆角方形</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label>姓名<input id="basicName" type="text" autocomplete="name" /></label>
+            <label>目标职位<input id="basicTitle" type="text" /></label>
+            <label>电话<input id="basicPhone" type="tel" autocomplete="tel" /></label>
+            <label>邮箱<input id="basicEmail" type="email" autocomplete="email" /></label>
+            <label class="field-span">教育经历<input id="basicEducation" type="text" /></label>
+          </div>
+        </section>
+
+        <div class="module-actions">
+          <button class="button button--secondary" id="sortByJobButton" type="button">按岗位相关性排序内容</button>
+          <button class="button button--quiet" id="addModuleButton" type="button">＋ 添加模块</button>
+        </div>
+        <p id="sortStatus" class="field-hint" aria-live="polite"></p>
+
+        <ol class="module-list" id="moduleList" aria-label="简历模块；可拖动排序"></ol>
+
+        <section class="module-editor" id="moduleEditor" aria-labelledby="editorHeading">
+          <div class="editor-empty" id="editorEmpty">选择一个模块后在这里编辑内容。</div>
+          <div id="editorFields" hidden>
+            <div class="module-editor__heading">
+              <h3 id="editorHeading">编辑模块</h3>
+              <div class="inline-actions inline-actions--start">
+                <button class="button button--quiet" id="duplicateModuleButton" type="button">复制模块</button>
+                <button class="button button--danger" id="deleteModuleButton" type="button">删除模块</button>
+              </div>
+            </div>
+            <label for="moduleTitleInput">模块标题</label>
+            <input id="moduleTitleInput" type="text" />
+            <div class="module-options" aria-label="模块显示设置">
+              <label class="option-toggle"><input id="moduleTitleVisible" type="checkbox" />显示标题</label>
+              <label class="option-toggle" id="moduleMetricIconsField"><input id="moduleMetricIconsVisible" type="checkbox" />显示成果图标</label>
+              <label>强调程度
+                <select id="moduleEmphasis">
+                  <option value="standard">标准</option>
+                  <option value="strong">突出</option>
+                  <option value="quiet">淡化</option>
+                </select>
+              </label>
+              <label>上下留白
+                <select id="moduleSpacing">
+                  <option value="tight">紧</option>
+                  <option value="standard">标准</option>
+                  <option value="loose">松</option>
+                </select>
+              </label>
+              <label id="moduleColumnsField">每行数量
+                <select id="moduleColumns">
+                  <option value="2">2 项</option>
+                  <option value="3">3 项</option>
+                </select>
+              </label>
+              <label id="moduleBulletField">项目符号
+                <select id="moduleBulletStyle">
+                  <option value="dot">圆点</option>
+                  <option value="line">短线</option>
+                  <option value="none">无符号</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="structured-editor" id="structuredEditor"></div>
+            <details class="bulk-editor" id="bulkEditor">
+              <summary>批量编辑文本</summary>
+              <label for="moduleContentInput">模块内容</label>
+              <textarea id="moduleContentInput" rows="10"></textarea>
+              <p class="field-hint" id="moduleFormatHint"></p>
+            </details>
+            <div id="imageEditor" class="image-editor" hidden>
+              <label class="button button--secondary file-button" for="imageUpload">添加作品图片</label>
+              <input id="imageUpload" class="visually-hidden" type="file" accept="image/*" multiple />
+              <div id="imageList" class="image-list"></div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <footer class="site-footer">
+      <p class="footer-statement">内容由你决定，工具只负责排版。</p>
+      <div class="footer-meta">
+        <span>本地工具 · 无账号 · 无云端保存</span>
+        <span>打印窗口中选择“保存为 PDF”</span>
+      </div>
+    </footer>
+
+    <div class="mobile-actionbar">
+      <button class="button button--primary button--wide" id="mobileGptButton" type="button">打开 GPT 优化流程</button>
+    </div>
+
+    <dialog id="gptDialog" class="gpt-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-header">
+          <div>
+            <p class="dialog-label">GPT 辅助流程</p>
+            <h2>复制出去，再粘回来</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭对话框">关闭</button>
+        </div>
+
+        <ol class="flow-steps">
+          <li>
+            <div class="step-heading"><strong>复制提示词</strong><span>1</span></div>
+            <textarea id="promptOutput" rows="10" readonly></textarea>
+            <div class="inline-actions">
+              <button class="button button--primary" id="copyPromptButton" type="button">复制提示词</button>
+              <a class="button button--secondary" href="https://chatgpt.com/" target="_blank" rel="noreferrer">打开 ChatGPT</a>
+            </div>
+          </li>
+          <li>
+            <div class="step-heading"><strong>粘贴 GPT 的完整回答</strong><span>2</span></div>
+            <textarea id="gptResponseInput" rows="12" aria-describedby="gptParseStatus" placeholder="请粘贴 JSON。即使带有代码块标记，也能识别。"></textarea>
+            <div id="gptParseStatus" class="status-box" aria-live="polite" hidden></div>
+          </li>
+          <li id="gptReviewSection" hidden>
+            <div class="step-heading"><strong>逐条确认修改</strong><span>3</span></div>
+            <div class="review-toolbar">
+              <p id="gptReviewSummary" aria-live="polite"></p>
+              <div class="inline-actions inline-actions--start">
+                <button class="button button--secondary" id="selectSafeChangesButton" type="button">选择安全项</button>
+                <button class="button button--quiet" id="clearGptChangesButton" type="button">清除选择</button>
+              </div>
+            </div>
+            <div id="gptDiffList" class="diff-list" role="list" aria-label="GPT 修改对比"></div>
+          </li>
+        </ol>
+
+        <div class="dialog-footer">
+          <button class="button button--quiet" value="cancel">暂不使用</button>
+          <button class="button button--primary" id="applyGptButton" type="button">查看修改对比</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="preflightDialog" class="preflight-dialog">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-header">
+          <div>
+            <p class="dialog-label">导出前体检</p>
+            <h2>先检查，再输出</h2>
+          </div>
+          <button class="icon-button" value="cancel" aria-label="关闭体检窗口">关闭</button>
+        </div>
+        <div class="preflight-body">
+          <div class="preflight-summary" id="preflightSummary" aria-live="polite"></div>
+          <ul class="preflight-list" id="preflightList"></ul>
+        </div>
+        <div class="dialog-footer">
+          <button class="button button--quiet" value="cancel">继续编辑</button>
+          <fieldset class="export-format" aria-label="导出格式">
+            <label><input type="radio" name="exportFormat" value="pdf" checked />PDF</label>
+            <label><input type="radio" name="exportFormat" value="jpg" />JPG</label>
+          </fieldset>
+          <button class="button button--primary" id="confirmExportButton" type="button">导出 PDF</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="undo-bar" id="undoBar" role="status" aria-live="polite" hidden>
+      <span id="undoMessage">已恢复示例内容</span>
+      <button id="undoButton" type="button">撤销</button>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
