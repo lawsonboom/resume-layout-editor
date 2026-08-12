@@ -6,7 +6,9 @@
 
 ## 打开
 
-线上版本可直接通过 GitHub Pages 打开。本地使用时双击 `start.command`；终端窗口需要在使用期间保持开启。
+线上版本：[打开简历排版工作台](https://lawsonboom.github.io/resume-layout-editor/)。
+
+本地使用时双击 `start.command`；终端窗口需要在使用期间保持开启。
 
 也可以在本目录运行：
 
