@@ -3,6 +3,7 @@ import * as pdfjsLib from "./vendor/pdf.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", import.meta.url).href;
 
 const STORAGE_KEY = "resume-layout-editor-v2-blank";
+const LAYOUT_KEY = "resume-layout-editor-layout-v1";
 const LEGACY_STORAGE_KEYS = ["resume-layout-editor-v1"];
 const allowedModuleTypes = new Set(["text", "list", "metrics", "experience", "images"]);
 const allowedStyles = new Set(["classic", "sidebar", "compact"]);
@@ -76,9 +77,6 @@ const elements = {
   fileStatus: document.querySelector("#fileStatus"),
   resumeText: document.querySelector("#resumeText"),
   jobText: document.querySelector("#jobText"),
-  keywordPreview: document.querySelector("#keywordPreview"),
-  localOptimizeButton: document.querySelector("#localOptimizeButton"),
-  localOptimizeStatus: document.querySelector("#localOptimizeStatus"),
   gptFlowButton: document.querySelector("#gptFlowButton"),
   mobileGptButton: document.querySelector("#mobileGptButton"),
   exportButton: document.querySelector("#exportButton"),
@@ -92,6 +90,9 @@ const elements = {
   resumePalette: document.querySelector("#resumePalette"),
   paletteSwatches: document.querySelector("#paletteSwatches"),
   paperViewport: document.querySelector(".paper-viewport"),
+  workbench: document.querySelector(".workbench"),
+  sourceResizer: document.querySelector("#sourceResizer"),
+  editorResizer: document.querySelector("#editorResizer"),
   resumePrintRoot: document.querySelector("#resumePrintRoot"),
   pixelGenerate: document.querySelector("#pixelGenerate"),
   pixelGenerateGrid: document.querySelector("#pixelGenerateGrid"),
@@ -174,11 +175,24 @@ let pendingGptReview = null;
 let previewZoom = 1;
 let previewPan = { x: 0, y: 0 };
 let pinchStart = null;
-let panStart = null;
 let previewPointerMoved = false;
+let resumeFitScale = 1;
+let layoutWidths = loadLayoutWidths();
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function loadLayoutWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAYOUT_KEY));
+    return {
+      source: Number.isFinite(saved?.source) ? saved.source : null,
+      editor: Number.isFinite(saved?.editor) ? saved.editor : null,
+    };
+  } catch {
+    return { source: null, editor: null };
+  }
 }
 
 function loadState() {
@@ -300,7 +314,6 @@ function scheduleSave() {
 
 function renderAll() {
   syncFormFromState();
-  updateLocalOptimizerPreview();
   renderJobTips();
   renderModuleList();
   renderModuleEditor();
@@ -500,6 +513,8 @@ function renderResumeModule(module) {
 function renderResume() {
   const root = elements.resumePrintRoot;
   root.replaceChildren();
+  const content = create("div", "resume-content");
+  root.append(content);
   root.style.setProperty("--resume-scale", state.settings.fontScale);
   root.dataset.density = state.settings.density;
   root.dataset.style = state.settings.style;
@@ -513,8 +528,8 @@ function renderResume() {
       create("strong", "", "从右侧开始填写"),
       create("p", "", "也可以先上传 PDF 或 TXT，再逐项整理成 A4 简历。"),
     );
-    root.append(emptyState);
-    requestAnimationFrame(updatePreviewSize);
+    content.append(emptyState);
+    requestAnimationFrame(fitResumeToOnePage);
     return;
   }
   if (state.settings.style === "sidebar") {
@@ -528,22 +543,34 @@ function renderResume() {
     });
     if (!main.children.length) main.append(create("p", "resume-empty", "请在右侧开启至少一个主要内容模块。"));
     layout.append(sidebar, main);
-    root.append(layout);
+    content.append(layout);
   } else {
-    if (hasBasicContent) root.append(buildResumeHeader());
-    enabledModules.forEach((module) => root.append(renderResumeModule(module)));
+    if (hasBasicContent) content.append(buildResumeHeader());
+    enabledModules.forEach((module) => content.append(renderResumeModule(module)));
   }
 
   const selectedPreviewModule = [...root.querySelectorAll("[data-module-id]")]
     .find((node) => node.dataset.moduleId === selectedModuleId);
   selectedPreviewModule?.classList.add("is-preview-selected");
 
-  requestAnimationFrame(updatePreviewSize);
+  requestAnimationFrame(fitResumeToOnePage);
+}
+
+function fitResumeToOnePage() {
+  const root = elements.resumePrintRoot;
+  const content = root.querySelector(".resume-content");
+  if (!content) return updatePreviewSize();
+  root.style.setProperty("--fit-scale", "1");
+  const contentHeight = Math.max(1, content.scrollHeight);
+  resumeFitScale = Math.max(0.72, Math.min(1, (1123 - 128) / contentHeight));
+  root.style.setProperty("--fit-scale", resumeFitScale.toFixed(3));
+  root.classList.toggle("is-auto-fitted", resumeFitScale < 0.995);
+  updatePreviewSize();
 }
 
 function updatePreviewSize() {
   const viewportWidth = elements.paperViewport.clientWidth;
-  const rawHeight = Math.max(1123, elements.resumePrintRoot.scrollHeight);
+  const rawHeight = 1123;
   const widthScale = viewportWidth / 794;
   const isDesktopWorkbench = window.matchMedia("(min-width: 70rem)").matches;
   const heightScale = isDesktopWorkbench ? Math.max(0.28, (elements.paperViewport.clientHeight - 8) / rawHeight) : 1;
@@ -555,8 +582,13 @@ function updatePreviewSize() {
   elements.zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
   elements.paperViewport.classList.toggle("is-zoomed", previewZoom > 1.01);
   if (!isDesktopWorkbench) elements.paperViewport.style.height = `${Math.ceil(rawHeight * scale + 8)}px`;
-  const pages = Math.max(1, Math.ceil(rawHeight / 1123));
-  elements.pageIndicator.textContent = `预计 ${pages} 页`;
+  const fitPercent = Math.round(resumeFitScale * 100);
+  const contentHeight = elements.resumePrintRoot.querySelector(".resume-content")?.scrollHeight || 0;
+  const stillOverflowing = contentHeight * resumeFitScale > 995;
+  elements.pageIndicator.textContent = stillOverflowing
+    ? `预计导出：1 页 · 已压缩至可读下限 ${fitPercent}%，超出内容将裁切`
+    : resumeFitScale < 0.995 ? `预计导出：1 页 · 内容已自动压缩至 ${fitPercent}%` : "预计导出：1 页";
+  elements.pageIndicator.classList.toggle("is-fitted", resumeFitScale < 0.995);
 }
 
 function moduleSearchText(module) {
@@ -1172,53 +1204,6 @@ function setTipsExpanded(expanded) {
   elements.jobTipsCard.querySelector(".job-tips-card__chevron").textContent = expanded ? "−" : "＋";
 }
 
-function updateLocalOptimizerPreview() {
-  elements.keywordPreview.replaceChildren();
-  const keywords = matchedJobKeywords();
-  if (!state.jobText.trim()) {
-    elements.keywordPreview.append(create("span", "keyword-empty", "等待招聘需求"));
-    elements.localOptimizeStatus.textContent = "粘贴招聘需求后，可先检查匹配度。";
-    return;
-  }
-  if (!keywords.length) {
-    elements.keywordPreview.append(create("span", "keyword-empty", "暂未找到直接匹配词"));
-    elements.localOptimizeStatus.textContent = "招聘需求已读取，但与当前简历的直接匹配较少。";
-    return;
-  }
-  keywords.forEach((keyword) => elements.keywordPreview.append(create("span", "keyword-chip", keyword)));
-  elements.localOptimizeStatus.textContent = `已找到 ${keywords.length} 个匹配方向；本地只重排，不改写。`;
-}
-
-async function runLocalOptimization() {
-  if (!state.jobText.trim()) {
-    elements.localOptimizeStatus.textContent = "请先粘贴招聘需求。";
-    elements.jobText.focus();
-    return;
-  }
-  elements.localOptimizeButton.disabled = true;
-  elements.localOptimizeButton.setAttribute("aria-busy", "true");
-  elements.localOptimizeButton.textContent = "正在匹配…";
-  try {
-    await playPixelGenerate(() => {
-      const keywords = matchedJobKeywords();
-      showUndo("已完成本地匹配与重排");
-      sortItemsByJob();
-      const longItemCount = state.modules.reduce((total, module) => {
-        if (module.type === "experience") return total + module.items.flatMap((item) => item.bullets).filter((item) => item.length > 70).length;
-        if (["list", "text"].includes(module.type)) return total + module.items.filter((item) => String(item).length > 90).length;
-        return total;
-      }, 0);
-      state.jobTips = [];
-      renderJobTips();
-      elements.localOptimizeStatus.textContent = `${keywords.length ? `已按 ${keywords.length} 个匹配方向重排` : "已完成相关性检查"}${longItemCount ? `；另有 ${longItemCount} 条内容偏长，可在右侧精简` : "；当前内容密度正常"}。需要改写请使用 AI。`;
-    });
-  } finally {
-    elements.localOptimizeButton.disabled = false;
-    elements.localOptimizeButton.removeAttribute("aria-busy");
-    elements.localOptimizeButton.textContent = "重新匹配与重排";
-  }
-}
-
 async function playPixelGenerate(onCovered) {
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     onCovered();
@@ -1247,8 +1232,8 @@ async function playPixelGenerate(onCovered) {
     elements.pixelGenerateGrid.append(pixel);
     return { pixel, enter: ((index * 73 + index * index * 17) % 101) / 100, exit: ((index * 31 + index * index * 11) % 101) / 100 };
   });
-  elements.pixelGenerateTitle.textContent = "正在匹配简历";
-  elements.pixelGenerateStatus.textContent = "分析岗位并重排现有内容";
+  elements.pixelGenerateTitle.textContent = "正在生成简历";
+  elements.pixelGenerateStatus.textContent = "应用 AI 建议并重新排版";
   elements.pixelGenerate.hidden = false;
   elements.pixelGenerate.classList.add("is-running");
   const animations = [];
@@ -1264,8 +1249,8 @@ async function playPixelGenerate(onCovered) {
   });
   await new Promise((resolve) => window.setTimeout(resolve, swapAt));
   onCovered();
-  elements.pixelGenerateTitle.textContent = "匹配与重排完成";
-  elements.pixelGenerateStatus.textContent = "内容未改写，可继续使用 AI 优化";
+  elements.pixelGenerateTitle.textContent = "改写完成";
+  elements.pixelGenerateStatus.textContent = "正在适配一页 A4";
   await new Promise((resolve) => window.setTimeout(resolve, totalDuration - swapAt));
   animations.forEach((animation) => animation.cancel());
   elements.pixelGenerate.classList.remove("is-running");
@@ -1750,7 +1735,7 @@ function previewGptResponse() {
   }
 }
 
-function applySelectedGptChanges() {
+async function applySelectedGptChanges() {
   if (!pendingGptReview) {
     previewGptResponse();
     return;
@@ -1765,9 +1750,11 @@ function applySelectedGptChanges() {
     showUndo(`已应用 ${selectedChanges.length} 项 AI 建议`);
     const next = clone(state);
     selectedChanges.sort((left, right) => left.phase - right.phase).forEach((change) => change.apply(next));
-    state = normalizeState(next);
-    selectedModuleId = state.modules[0]?.id ?? null;
-    renderAll();
+    await playPixelGenerate(() => {
+      state = normalizeState(next);
+      selectedModuleId = state.modules[0]?.id ?? null;
+      renderAll();
+    });
     showGptStatus(`已应用 ${selectedChanges.length} 项修改；未勾选内容保持原样。`, "success");
     elements.applyGptButton.textContent = "已应用";
     elements.applyGptButton.disabled = true;
@@ -1783,23 +1770,24 @@ function applySelectedGptChanges() {
 }
 
 function estimatedResumePages() {
-  return Math.max(1, Math.ceil(Math.max(1123, elements.resumePrintRoot.scrollHeight) / 1123));
+  return 1;
 }
 
 function buildPreflightChecks() {
   const checks = [];
-  const pages = estimatedResumePages();
-  checks.push(pages > 1 ? {
+  const fitPercent = Math.round(resumeFitScale * 100);
+  const contentHeight = elements.resumePrintRoot.querySelector(".resume-content")?.scrollHeight || 0;
+  const contentWillCrop = contentHeight * resumeFitScale > 995;
+  checks.push(contentWillCrop || resumeFitScale < 0.82 ? {
     status: "warning",
-    title: `当前预计 ${pages} 页`,
-    detail: "如果目标是一页简历，请减少内容，或调整字号与间距后再导出。",
-    actionLabel: "调整预览",
+    title: contentWillCrop ? "内容超过一页可读容量" : `已压缩到一页，当前内容比例为 ${fitPercent}%`,
+    detail: contentWillCrop ? "为了保持可读字号和一页 A4，超出底部的内容不会导出；请精简次要内容。" : "已保持一页 A4，但缩放较多可能影响阅读；建议精简次要内容。",
+    actionLabel: "检查内容",
     sectionId: "previewHeading",
-    focusId: "density",
   } : {
     status: "pass",
-    title: "页面长度正常",
-    detail: "当前内容预计可以放入一页 A4。",
+    title: "一页 A4 适配正常",
+    detail: resumeFitScale < 0.995 ? `已自动调整间距与整体比例至 ${fitPercent}%。` : "当前内容无需压缩即可放入一页。",
   });
 
   const basicFields = [
@@ -1977,13 +1965,13 @@ async function exportResumeAsJpg() {
   const cssText = [...document.styleSheets].map((sheet) => {
     try { return [...sheet.cssRules].map((rule) => rule.cssText).join("\n"); } catch { return ""; }
   }).join("\n");
-  const rawHeight = Math.max(1123, root.scrollHeight);
+  const rawHeight = 1123;
   const scale = 2;
   const wrapper = document.createElement("div");
   wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
   wrapper.style.cssText = `width:794px;min-height:${rawHeight}px;background:white;`;
   const style = document.createElement("style");
-  style.textContent = `${cssText}\n.resume-sheet{transform:none!important;box-shadow:none!important;width:794px!important;min-height:${rawHeight}px!important;margin:0!important;}`;
+  style.textContent = `${cssText}\n.resume-sheet{transform:none!important;box-shadow:none!important;width:794px!important;height:1123px!important;min-height:1123px!important;overflow:hidden!important;margin:0!important;}`;
   wrapper.append(style, clonedRoot);
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${794 * scale}" height="${rawHeight * scale}" viewBox="0 0 794 ${rawHeight}"><foreignObject width="794" height="${rawHeight}">${serialized}</foreignObject></svg>`;
@@ -2125,7 +2113,6 @@ elements.jobText.addEventListener("input", () => {
   state.jobText = elements.jobText.value;
   state.jobTips = [];
   elements.sortStatus.textContent = "";
-  updateLocalOptimizerPreview();
   renderJobTips();
   renderModuleList();
   scheduleSave();
@@ -2308,7 +2295,6 @@ elements.deleteModuleButton.addEventListener("click", () => {
   renderAll();
 });
 elements.sortByJobButton.addEventListener("click", sortItemsByJob);
-elements.localOptimizeButton.addEventListener("click", runLocalOptimization);
 elements.jobTipsToggle.addEventListener("click", () => setTipsExpanded(elements.jobTipsToggle.getAttribute("aria-expanded") !== "true"));
 elements.refreshTipsButton.addEventListener("click", () => {
   state.jobTips = [];
@@ -2363,15 +2349,6 @@ elements.paperViewport.addEventListener("touchstart", (event) => {
       pan: { ...previewPan },
       midpoint,
     };
-    panStart = null;
-    return;
-  }
-  if (event.touches.length === 1 && previewZoom > 1.01 && !event.target.closest("button, input, textarea, select")) {
-    panStart = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY,
-      pan: { ...previewPan },
-    };
   }
 }, { passive: true });
 
@@ -2380,29 +2357,18 @@ elements.paperViewport.addEventListener("touchmove", (event) => {
     event.preventDefault();
     previewPointerMoved = true;
     const midpoint = touchMidpoint(event.touches);
-    const nextZoom = clampPreviewZoom(pinchStart.zoom * touchDistance(event.touches) / Math.max(1, pinchStart.distance));
+    const distanceRatio = touchDistance(event.touches) / Math.max(1, pinchStart.distance);
+    const nextZoom = clampPreviewZoom(pinchStart.zoom * distanceRatio);
     const ratio = nextZoom / pinchStart.zoom;
     previewZoom = nextZoom;
     previewPan.x = midpoint.x - (pinchStart.midpoint.x - pinchStart.pan.x) * ratio;
     previewPan.y = midpoint.y - (pinchStart.midpoint.y - pinchStart.pan.y) * ratio;
-    updatePreviewSize();
-    return;
-  }
-  if (event.touches.length === 1 && panStart && previewZoom > 1.01) {
-    const dx = event.touches[0].clientX - panStart.x;
-    const dy = event.touches[0].clientY - panStart.y;
-    if (Math.abs(dx) + Math.abs(dy) > 4) previewPointerMoved = true;
-    if (!previewPointerMoved) return;
-    event.preventDefault();
-    previewPan.x = panStart.pan.x + dx;
-    previewPan.y = panStart.pan.y + dy;
     updatePreviewSize();
   }
 }, { passive: false });
 
 elements.paperViewport.addEventListener("touchend", (event) => {
   if (event.touches.length < 2) pinchStart = null;
-  if (!event.touches.length) panStart = null;
 });
 
 elements.resumePrintRoot.addEventListener("click", (event) => {
@@ -2423,6 +2389,78 @@ elements.resumePrintRoot.addEventListener("keydown", (event) => {
   if (module) selectModuleFromPreview(module.dataset.moduleId);
   else selectBasicsFromPreview();
 });
+
+function applyLayoutWidths() {
+  if (!window.matchMedia("(min-width: 70rem)").matches) {
+    elements.workbench.style.removeProperty("--source-width");
+    elements.workbench.style.removeProperty("--editor-width");
+    return;
+  }
+  const available = Math.max(900, elements.workbench.clientWidth - 16);
+  const source = Math.min(available * 0.34, Math.max(220, layoutWidths.source || available * 0.22));
+  const editor = Math.min(available * 0.38, Math.max(280, layoutWidths.editor || available * 0.27));
+  const preview = available - source - editor;
+  const minimumPreview = 420;
+  const overflow = Math.max(0, minimumPreview - preview);
+  const sourceAdjusted = Math.max(220, source - overflow / 2);
+  const editorAdjusted = Math.max(280, editor - overflow / 2);
+  layoutWidths = { source: sourceAdjusted, editor: editorAdjusted };
+  elements.workbench.style.setProperty("--source-width", `${sourceAdjusted}px`);
+  elements.workbench.style.setProperty("--editor-width", `${editorAdjusted}px`);
+  elements.sourceResizer.setAttribute("aria-valuenow", String(Math.round(sourceAdjusted)));
+  elements.editorResizer.setAttribute("aria-valuenow", String(Math.round(editorAdjusted)));
+  requestAnimationFrame(updatePreviewSize);
+}
+
+function saveLayoutWidths() {
+  localStorage.setItem(LAYOUT_KEY, JSON.stringify(layoutWidths));
+}
+
+function bindColumnResizer(handle, side) {
+  const adjust = (delta) => {
+    const available = Math.max(900, elements.workbench.clientWidth - 16);
+    if (side === "source") layoutWidths.source = Math.min(available * 0.34, Math.max(220, (layoutWidths.source || 260) + delta));
+    else layoutWidths.editor = Math.min(available * 0.38, Math.max(280, (layoutWidths.editor || 340) - delta));
+    applyLayoutWidths();
+  };
+  handle.addEventListener("pointerdown", (event) => {
+    if (!window.matchMedia("(min-width: 70rem)").matches) return;
+    const startX = event.clientX;
+    const start = { ...layoutWidths };
+    handle.setPointerCapture(event.pointerId);
+    handle.classList.add("is-dragging");
+    document.body.classList.add("is-resizing-columns");
+    const move = (moveEvent) => {
+      layoutWidths = { ...start };
+      adjust(moveEvent.clientX - startX);
+    };
+    const end = () => {
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("is-resizing-columns");
+      saveLayoutWidths();
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Home") {
+      layoutWidths[side] = null;
+      applyLayoutWidths();
+    } else {
+      adjust(event.key === "ArrowRight" ? 16 : -16);
+    }
+    saveLayoutWidths();
+  });
+}
+
+bindColumnResizer(elements.sourceResizer, "source");
+bindColumnResizer(elements.editorResizer, "editor");
 
 function showUndo(message) {
   undoState = clone(state);
@@ -2455,7 +2493,11 @@ function restoreUndoState() {
 elements.undoButton.addEventListener("click", restoreUndoState);
 elements.panelUndoButton.addEventListener("click", restoreUndoState);
 
-window.addEventListener("resize", updatePreviewSize);
+window.addEventListener("resize", () => {
+  applyLayoutWidths();
+  updatePreviewSize();
+});
 if ("ResizeObserver" in window) new ResizeObserver(updatePreviewSize).observe(elements.resumePrintRoot);
 
+applyLayoutWidths();
 renderAll();

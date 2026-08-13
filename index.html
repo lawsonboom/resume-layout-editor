@@ -7,7 +7,7 @@
     <title>简历排版工作台</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23984936'/%3E%3Cpath d='M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./tokens.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260813-ai-zoom-link-v5" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-single-ai-resize-v6" />
   </head>
   <body>
     <a class="skip-link" href="#workspace">跳到编辑区</a>
@@ -32,7 +32,7 @@
         <div class="panel-heading">
           <span class="panel-index" aria-hidden="true">01 / MATCH</span>
           <h1 id="sourceHeading">简历与岗位</h1>
-          <p>上传、匹配和初步优化都在当前页面完成。</p>
+          <p>上传简历与招聘需求，再交给常用 AI 改写。</p>
         </div>
 
         <div class="field-group">
@@ -57,21 +57,17 @@
           <textarea id="jobText" rows="6" placeholder="粘贴岗位职责、任职要求和加分项。"></textarea>
         </div>
 
-        <section class="local-optimizer" aria-labelledby="localOptimizerHeading">
-          <div class="local-optimizer__heading">
-            <div>
-              <h2 id="localOptimizerHeading">本页快速优化</h2>
-              <p>先做岗位匹配、排序和密度检查，不改动事实。</p>
-            </div>
-            <span class="local-badge">本地</span>
+        <section class="ai-rewrite-card" aria-labelledby="aiRewriteHeading">
+          <div>
+            <span class="ai-rewrite-card__label">AI REWRITE</span>
+            <h2 id="aiRewriteHeading">生成岗位匹配版本</h2>
+            <p>复制提示词到任意 AI，再把 JSON 回答粘贴回来。</p>
           </div>
-          <div class="keyword-preview" id="keywordPreview" aria-label="岗位关键词"></div>
-          <p class="optimizer-status" id="localOptimizeStatus" aria-live="polite">粘贴招聘需求后，可先检查匹配度。</p>
-          <button class="button button--secondary button--wide" id="localOptimizeButton" type="button">本地匹配与重排</button>
           <button class="button button--ai button--wide" id="gptFlowButton" type="button"><span aria-hidden="true">AI</span> 深度改写并生成</button>
-          <p class="field-hint ai-provider-note">复制提示词到任意 AI，再把 JSON 回答粘贴回来。</p>
         </section>
       </aside>
+
+      <div class="column-resizer" id="sourceResizer" role="separator" aria-label="调整上传区与简历区宽度" aria-orientation="vertical" tabindex="0"><span aria-hidden="true"></span></div>
 
       <section class="preview-stage" aria-labelledby="previewHeading">
         <div class="stage-signal" aria-hidden="true">
@@ -103,7 +99,7 @@
             </div>
           </div>
         </div>
-        <div class="page-indicator" id="pageIndicator">预计 1 页</div>
+        <div class="page-indicator" id="pageIndicator">预计导出：1 页</div>
         <div class="paper-viewport" id="paperViewport" aria-describedby="zoomHint">
           <article id="resumePrintRoot" class="resume-sheet" aria-label="简历打印预览"></article>
           <div class="pixel-generate" id="pixelGenerate" aria-hidden="true" hidden>
@@ -121,9 +117,11 @@
               <button class="text-action" id="refreshTipsButton" type="button">根据当前岗位更新准备清单</button>
             </div>
           </aside>
-          <p class="zoom-hint" id="zoomHint">双指缩放 · 放大后单指拖动</p>
+          <p class="zoom-hint" id="zoomHint">双指缩放 · 双指拖动查看</p>
         </div>
       </section>
+
+      <div class="column-resizer" id="editorResizer" role="separator" aria-label="调整简历区与编辑区宽度" aria-orientation="vertical" tabindex="0"><span aria-hidden="true"></span></div>
 
       <aside class="panel module-panel" aria-labelledby="moduleHeading">
         <div class="panel-heading panel-heading--row">
@@ -349,6 +347,6 @@
       <button id="undoButton" type="button">撤销</button>
     </div>
 
-    <script type="module" src="./app.js?v=20260813-ai-zoom-link-v5"></script>
+    <script type="module" src="./app.js?v=20260813-single-ai-resize-v6"></script>
   </body>
 </html>
