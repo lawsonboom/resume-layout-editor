@@ -7,7 +7,7 @@
     <title>简历排版工作台</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23984936'/%3E%3Cpath d='M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./tokens.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260812-pixel-monochrome-v3-1" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-ai-zoom-link-v5" />
   </head>
   <body>
     <a class="skip-link" href="#workspace">跳到编辑区</a>
@@ -66,9 +66,10 @@
             <span class="local-badge">本地</span>
           </div>
           <div class="keyword-preview" id="keywordPreview" aria-label="岗位关键词"></div>
-          <p class="optimizer-status" id="localOptimizeStatus" aria-live="polite">粘贴招聘需求后，即可直接优化。</p>
-          <button class="button button--primary button--wide" id="localOptimizeButton" type="button">生成匹配简历</button>
-          <button class="text-action" id="gptFlowButton" type="button">需要深度改写时使用 GPT（可选）</button>
+          <p class="optimizer-status" id="localOptimizeStatus" aria-live="polite">粘贴招聘需求后，可先检查匹配度。</p>
+          <button class="button button--secondary button--wide" id="localOptimizeButton" type="button">本地匹配与重排</button>
+          <button class="button button--ai button--wide" id="gptFlowButton" type="button"><span aria-hidden="true">AI</span> 深度改写并生成</button>
+          <p class="field-hint ai-provider-note">复制提示词到任意 AI，再把 JSON 回答粘贴回来。</p>
         </section>
       </aside>
 
@@ -95,10 +96,15 @@
               <option value="compact">紧凑</option>
               <option value="comfortable" selected>舒展</option>
             </select>
+            <div class="zoom-controls" aria-label="简历预览缩放">
+              <button id="zoomOutButton" type="button" aria-label="缩小简历预览">−</button>
+              <button id="zoomResetButton" type="button" aria-label="恢复简历预览大小"><span id="zoomValue">100%</span></button>
+              <button id="zoomInButton" type="button" aria-label="放大简历预览">＋</button>
+            </div>
           </div>
         </div>
         <div class="page-indicator" id="pageIndicator">预计 1 页</div>
-        <div class="paper-viewport">
+        <div class="paper-viewport" id="paperViewport" aria-describedby="zoomHint">
           <article id="resumePrintRoot" class="resume-sheet" aria-label="简历打印预览"></article>
           <div class="pixel-generate" id="pixelGenerate" aria-hidden="true" hidden>
             <div class="pixel-generate__status"><strong id="pixelGenerateTitle">正在生成简历</strong><span id="pixelGenerateStatus">分析岗位与重排内容</span></div>
@@ -115,6 +121,7 @@
               <button class="text-action" id="refreshTipsButton" type="button">根据当前岗位更新准备清单</button>
             </div>
           </aside>
+          <p class="zoom-hint" id="zoomHint">双指缩放 · 放大后单指拖动</p>
         </div>
       </section>
 
@@ -124,7 +131,10 @@
             <span class="panel-index" aria-hidden="true">03 / EDIT</span>
             <h2 id="moduleHeading">选择、重排、改写</h2>
           </div>
-          <button class="button button--quiet" id="resetButton" type="button">清空内容</button>
+          <div class="panel-heading__actions">
+            <button class="button button--secondary" id="panelUndoButton" type="button" disabled>撤销上一步</button>
+            <button class="button button--quiet" id="resetButton" type="button">清空内容</button>
+          </div>
         </div>
 
         <section class="layout-editor" aria-labelledby="layoutHeading">
@@ -263,15 +273,15 @@
     </footer>
 
     <div class="mobile-actionbar">
-      <button class="button button--primary button--wide" id="mobileGptButton" type="button">打开 GPT 优化流程</button>
+      <button class="button button--ai button--wide" id="mobileGptButton" type="button">使用 AI 深度改写</button>
     </div>
 
     <dialog id="gptDialog" class="gpt-dialog">
       <form method="dialog" class="dialog-card">
         <div class="dialog-header">
           <div>
-            <p class="dialog-label">GPT 辅助流程</p>
-            <h2>复制出去，再粘回来</h2>
+            <p class="dialog-label">通用 AI 辅助流程</p>
+            <h2>任意 AI 都可以使用</h2>
           </div>
           <button class="icon-button" value="cancel" aria-label="关闭对话框">关闭</button>
         </div>
@@ -282,11 +292,11 @@
             <textarea id="promptOutput" rows="10" readonly></textarea>
             <div class="inline-actions">
               <button class="button button--primary" id="copyPromptButton" type="button">复制提示词</button>
-              <a class="button button--secondary" href="https://chatgpt.com/" target="_blank" rel="noreferrer">打开 ChatGPT</a>
+              <span class="ai-provider-list">可粘贴到 ChatGPT、Claude、Gemini、豆包、DeepSeek 或其他 AI。</span>
             </div>
           </li>
           <li>
-            <div class="step-heading"><strong>粘贴 GPT 的完整回答</strong><span>2</span></div>
+            <div class="step-heading"><strong>粘贴 AI 的完整回答</strong><span>2</span></div>
             <textarea id="gptResponseInput" rows="12" aria-describedby="gptParseStatus" placeholder="请粘贴 JSON。即使带有代码块标记，也能识别。"></textarea>
             <div id="gptParseStatus" class="status-box" aria-live="polite" hidden></div>
           </li>
@@ -299,7 +309,7 @@
                 <button class="button button--quiet" id="clearGptChangesButton" type="button">清除选择</button>
               </div>
             </div>
-            <div id="gptDiffList" class="diff-list" role="list" aria-label="GPT 修改对比"></div>
+            <div id="gptDiffList" class="diff-list" role="list" aria-label="AI 修改对比"></div>
           </li>
         </ol>
 
@@ -335,10 +345,10 @@
     </dialog>
 
     <div class="undo-bar" id="undoBar" role="status" aria-live="polite" hidden>
-      <span id="undoMessage">已恢复示例内容</span>
+      <span id="undoMessage">已完成操作</span>
       <button id="undoButton" type="button">撤销</button>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=20260813-ai-zoom-link-v5"></script>
   </body>
 </html>

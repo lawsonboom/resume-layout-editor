@@ -84,6 +84,10 @@ const elements = {
   exportButton: document.querySelector("#exportButton"),
   fontScale: document.querySelector("#fontScale"),
   density: document.querySelector("#density"),
+  zoomOutButton: document.querySelector("#zoomOutButton"),
+  zoomResetButton: document.querySelector("#zoomResetButton"),
+  zoomInButton: document.querySelector("#zoomInButton"),
+  zoomValue: document.querySelector("#zoomValue"),
   resumeStyle: document.querySelector("#resumeStyle"),
   resumePalette: document.querySelector("#resumePalette"),
   paletteSwatches: document.querySelector("#paletteSwatches"),
@@ -115,6 +119,9 @@ const elements = {
   sortStatus: document.querySelector("#sortStatus"),
   addModuleButton: document.querySelector("#addModuleButton"),
   resetButton: document.querySelector("#resetButton"),
+  panelUndoButton: document.querySelector("#panelUndoButton"),
+  modulePanel: document.querySelector(".module-panel"),
+  basicsEditor: document.querySelector(".basics-editor"),
   moduleList: document.querySelector("#moduleList"),
   editorEmpty: document.querySelector("#editorEmpty"),
   editorFields: document.querySelector("#editorFields"),
@@ -164,6 +171,11 @@ let undoState = null;
 let undoTimer = null;
 let saveTimer = null;
 let pendingGptReview = null;
+let previewZoom = 1;
+let previewPan = { x: 0, y: 0 };
+let pinchStart = null;
+let panStart = null;
+let previewPointerMoved = false;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -334,6 +346,9 @@ function create(tag, className, text) {
 
 function buildResumeHeader() {
   const header = create("header", "resume-header");
+  header.tabIndex = 0;
+  header.setAttribute("role", "button");
+  header.setAttribute("aria-label", "编辑基本信息");
   const identity = create("div", "resume-identity");
   identity.append(create("h1", "resume-name", state.basics.name || "姓名"));
   identity.append(create("p", "resume-title", state.basics.title || "目标职位"));
@@ -424,13 +439,18 @@ function renderResumeModule(module) {
   section.dataset.emphasis = options.emphasis;
   section.dataset.spacing = options.spacing;
   section.dataset.bullets = options.bulletStyle;
+  section.tabIndex = 0;
+  section.setAttribute("role", "button");
+  section.setAttribute("aria-label", `编辑${module.title}`);
   section.style.setProperty("--module-columns", options.columns);
   if (options.titleVisible) section.append(create("h2", "", module.title));
 
   if (module.type === "metrics") {
     const grid = create("div", "metric-grid");
     grid.classList.toggle("is-iconless", !options.metricIconsVisible);
-    grid.style.setProperty("--metric-count", Math.max(1, module.items.length));
+    const metricColumns = module.items.length <= 4 ? Math.max(1, module.items.length) : Math.ceil(module.items.length / 2);
+    grid.classList.toggle("is-two-row", module.items.length > 4);
+    grid.style.setProperty("--metric-columns", metricColumns);
     module.items.forEach((item) => {
       const metric = create("div", "metric-item");
       const copy = create("div", "metric-copy");
@@ -514,6 +534,10 @@ function renderResume() {
     enabledModules.forEach((module) => root.append(renderResumeModule(module)));
   }
 
+  const selectedPreviewModule = [...root.querySelectorAll("[data-module-id]")]
+    .find((node) => node.dataset.moduleId === selectedModuleId);
+  selectedPreviewModule?.classList.add("is-preview-selected");
+
   requestAnimationFrame(updatePreviewSize);
 }
 
@@ -525,6 +549,11 @@ function updatePreviewSize() {
   const heightScale = isDesktopWorkbench ? Math.max(0.28, (elements.paperViewport.clientHeight - 8) / rawHeight) : 1;
   const scale = Math.min(1, Math.max(0.28, widthScale), heightScale);
   elements.paperViewport.style.setProperty("--preview-scale", scale.toFixed(3));
+  elements.paperViewport.style.setProperty("--user-zoom", previewZoom.toFixed(3));
+  elements.paperViewport.style.setProperty("--preview-pan-x", `${previewPan.x}px`);
+  elements.paperViewport.style.setProperty("--preview-pan-y", `${previewPan.y}px`);
+  elements.zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
+  elements.paperViewport.classList.toggle("is-zoomed", previewZoom > 1.01);
   if (!isDesktopWorkbench) elements.paperViewport.style.height = `${Math.ceil(rawHeight * scale + 8)}px`;
   const pages = Math.max(1, Math.ceil(rawHeight / 1123));
   elements.pageIndicator.textContent = `预计 ${pages} 页`;
@@ -617,6 +646,7 @@ function bindDragEvents(row) {
 
 function moveModule(from, to) {
   if (from < 0 || to < 0 || from >= state.modules.length || to >= state.modules.length || from === to) return;
+  showUndo(`已调整“${state.modules[from].title}”的位置`);
   const [moved] = state.modules.splice(from, 1);
   state.modules.splice(to, 0, moved);
   renderAll();
@@ -626,6 +656,69 @@ function selectModule(id) {
   selectedModuleId = id;
   renderModuleList();
   renderModuleEditor();
+}
+
+function selectModuleFromPreview(id) {
+  if (!state.modules.some((module) => module.id === id)) return;
+  selectModule(id);
+  elements.resumePrintRoot.querySelectorAll(".resume-module.is-preview-selected").forEach((node) => node.classList.remove("is-preview-selected"));
+  const previewModule = elements.resumePrintRoot.querySelector(`[data-module-id="${CSS.escape(id)}"]`);
+  previewModule?.classList.add("is-preview-selected");
+  requestAnimationFrame(() => {
+    if (window.matchMedia("(min-width: 70rem)").matches) elements.modulePanel.scrollTo({ top: Math.max(0, elements.editorFields.offsetTop - 84), behavior: "smooth" });
+    else elements.editorFields.scrollIntoView({ behavior: "smooth", block: "start" });
+    elements.moduleTitleInput.focus({ preventScroll: true });
+  });
+}
+
+function selectBasicsFromPreview() {
+  elements.resumePrintRoot.querySelectorAll(".is-preview-selected").forEach((node) => node.classList.remove("is-preview-selected"));
+  elements.resumePrintRoot.querySelector(".resume-header")?.classList.add("is-preview-selected");
+  if (window.matchMedia("(min-width: 70rem)").matches) elements.modulePanel.scrollTo({ top: Math.max(0, elements.basicsEditor.offsetTop - 84), behavior: "smooth" });
+  else elements.basicsEditor.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(() => elements.basicName.focus({ preventScroll: true }), 220);
+}
+
+function clampPreviewZoom(value) {
+  return Math.min(2.5, Math.max(0.75, value));
+}
+
+function setPreviewZoom(value, anchor = null) {
+  const nextZoom = clampPreviewZoom(value);
+  if (anchor && previewZoom) {
+    const ratio = nextZoom / previewZoom;
+    previewPan.x = anchor.x - (anchor.x - previewPan.x) * ratio;
+    previewPan.y = anchor.y - (anchor.y - previewPan.y) * ratio;
+  }
+  previewZoom = nextZoom;
+  if (Math.abs(previewZoom - 1) < 0.01) {
+    previewZoom = 1;
+    previewPan = { x: 0, y: 0 };
+  }
+  updatePreviewSize();
+}
+
+function resetPreviewZoom() {
+  previewZoom = 1;
+  previewPan = { x: 0, y: 0 };
+  updatePreviewSize();
+}
+
+function touchDistance(touches) {
+  return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+}
+
+function touchMidpoint(touches) {
+  const rect = elements.paperViewport.getBoundingClientRect();
+  return {
+    x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
+    y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
+  };
+}
+
+function previewAnchorFromEvent(event) {
+  const rect = elements.paperViewport.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
 function renderModuleEditor() {
@@ -719,6 +812,7 @@ function createItemActions(label, items, index, onChange) {
   up.disabled = index === 0;
   up.setAttribute("aria-label", `上移${label}`);
   up.addEventListener("click", () => {
+    showUndo(`已上移${label}`);
     moveItem(items, index, -1);
     onChange();
   });
@@ -727,6 +821,7 @@ function createItemActions(label, items, index, onChange) {
   down.disabled = index === items.length - 1;
   down.setAttribute("aria-label", `下移${label}`);
   down.addEventListener("click", () => {
+    showUndo(`已下移${label}`);
     moveItem(items, index, 1);
     onChange();
   });
@@ -734,6 +829,7 @@ function createItemActions(label, items, index, onChange) {
   remove.type = "button";
   remove.setAttribute("aria-label", `移除${label}`);
   remove.addEventListener("click", () => {
+    showUndo(`已移除${label}`);
     items.splice(index, 1);
     onChange();
   });
@@ -779,6 +875,7 @@ function renderStructuredEditor(module) {
     add.addEventListener("click", () => elements.imageUpload.click());
   } else {
     add.addEventListener("click", () => {
+      showUndo(module.type === "experience" ? "已添加一段经历" : "已添加一项内容");
       if (module.type === "metrics") module.items.push({ value: "", label: "", icon: "trend" });
       else if (module.type === "experience") module.items.push({ company: "", role: "", date: "", bullets: [""] });
       else module.items.push("");
@@ -790,7 +887,7 @@ function renderStructuredEditor(module) {
   elements.structuredEditor.append(heading);
 
   if (module.type === "metrics") {
-    elements.structuredEditor.append(create("p", "field-hint", "关键成果固定为单行，建议保留 4–6 项。每项可单独选择图案。"));
+    elements.structuredEditor.append(create("p", "field-hint", "关键成果会优先排成一行；超过 4 项时自动换成两行。每项可单独选择图案。"));
   }
 
   if (!module.items.length) {
@@ -1080,7 +1177,7 @@ function updateLocalOptimizerPreview() {
   const keywords = matchedJobKeywords();
   if (!state.jobText.trim()) {
     elements.keywordPreview.append(create("span", "keyword-empty", "等待招聘需求"));
-    elements.localOptimizeStatus.textContent = "粘贴招聘需求后，即可直接优化。";
+    elements.localOptimizeStatus.textContent = "粘贴招聘需求后，可先检查匹配度。";
     return;
   }
   if (!keywords.length) {
@@ -1089,7 +1186,7 @@ function updateLocalOptimizerPreview() {
     return;
   }
   keywords.forEach((keyword) => elements.keywordPreview.append(create("span", "keyword-chip", keyword)));
-  elements.localOptimizeStatus.textContent = `已找到 ${keywords.length} 个匹配方向，可直接重排。`;
+  elements.localOptimizeStatus.textContent = `已找到 ${keywords.length} 个匹配方向；本地只重排，不改写。`;
 }
 
 async function runLocalOptimization() {
@@ -1100,11 +1197,11 @@ async function runLocalOptimization() {
   }
   elements.localOptimizeButton.disabled = true;
   elements.localOptimizeButton.setAttribute("aria-busy", "true");
-  elements.localOptimizeButton.textContent = "正在生成…";
+  elements.localOptimizeButton.textContent = "正在匹配…";
   try {
     await playPixelGenerate(() => {
       const keywords = matchedJobKeywords();
-      showUndo("已生成匹配简历");
+      showUndo("已完成本地匹配与重排");
       sortItemsByJob();
       const longItemCount = state.modules.reduce((total, module) => {
         if (module.type === "experience") return total + module.items.flatMap((item) => item.bullets).filter((item) => item.length > 70).length;
@@ -1113,12 +1210,12 @@ async function runLocalOptimization() {
       }, 0);
       state.jobTips = [];
       renderJobTips();
-      elements.localOptimizeStatus.textContent = `${keywords.length ? `已按 ${keywords.length} 个匹配方向生成` : "已完成相关性检查"}${longItemCount ? `；另有 ${longItemCount} 条内容偏长，可在右侧精简` : "；当前内容密度正常"}。`;
+      elements.localOptimizeStatus.textContent = `${keywords.length ? `已按 ${keywords.length} 个匹配方向重排` : "已完成相关性检查"}${longItemCount ? `；另有 ${longItemCount} 条内容偏长，可在右侧精简` : "；当前内容密度正常"}。需要改写请使用 AI。`;
     });
   } finally {
     elements.localOptimizeButton.disabled = false;
     elements.localOptimizeButton.removeAttribute("aria-busy");
-    elements.localOptimizeButton.textContent = "重新生成匹配简历";
+    elements.localOptimizeButton.textContent = "重新匹配与重排";
   }
 }
 
@@ -1150,8 +1247,8 @@ async function playPixelGenerate(onCovered) {
     elements.pixelGenerateGrid.append(pixel);
     return { pixel, enter: ((index * 73 + index * index * 17) % 101) / 100, exit: ((index * 31 + index * index * 11) % 101) / 100 };
   });
-  elements.pixelGenerateTitle.textContent = "正在生成简历";
-  elements.pixelGenerateStatus.textContent = "分析岗位与重排内容";
+  elements.pixelGenerateTitle.textContent = "正在匹配简历";
+  elements.pixelGenerateStatus.textContent = "分析岗位并重排现有内容";
   elements.pixelGenerate.hidden = false;
   elements.pixelGenerate.classList.add("is-running");
   const animations = [];
@@ -1167,8 +1264,8 @@ async function playPixelGenerate(onCovered) {
   });
   await new Promise((resolve) => window.setTimeout(resolve, swapAt));
   onCovered();
-  elements.pixelGenerateTitle.textContent = "简历已生成";
-  elements.pixelGenerateStatus.textContent = "已按岗位重点完成重排";
+  elements.pixelGenerateTitle.textContent = "匹配与重排完成";
+  elements.pixelGenerateStatus.textContent = "内容未改写，可继续使用 AI 优化";
   await new Promise((resolve) => window.setTimeout(resolve, totalDuration - swapAt));
   animations.forEach((animation) => animation.cancel());
   elements.pixelGenerate.classList.remove("is-running");
@@ -1197,7 +1294,7 @@ function sortItemsByJob() {
 function buildGptPrompt() {
   const source = state.sourceText.trim() || "（未提供；请提醒用户补充，不要推测）";
   const job = state.jobText.trim() || "（未提供；仅整理原简历，不要假设岗位需求）";
-  return `你是一名严谨的简历内容编辑。请根据“原简历”和“招聘需求”，筛选、压缩并重排内容，最终只输出一个 JSON 对象。
+  return `你是一名严谨的简历内容编辑。请根据“原简历”和“招聘需求”，筛选、压缩并重排内容，最终只输出一个 JSON 对象。此提示词必须兼容不同 AI 助手，不依赖任何特定产品功能。
 
 硬性规则：
 1. 不得发明原简历中不存在的公司、职位、项目、数字、日期、学历、技能或成果。
@@ -1270,11 +1367,11 @@ function parseGptJson(raw) {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start < 0 || end < start) throw new Error("没有找到 JSON 对象。请粘贴 GPT 的完整回答。");
+  if (start < 0 || end < start) throw new Error("没有找到 JSON 对象。请粘贴 AI 的完整回答。");
   const parsed = JSON.parse(cleaned.slice(start, end + 1));
   if (!parsed.basics || !Array.isArray(parsed.modules)) throw new Error("缺少 basics 或 modules，回答结构不完整。");
   const modules = normalizeModules(parsed.modules);
-  if (!modules.length) throw new Error("没有可用模块。请让 GPT 严格按提示词输出。");
+  if (!modules.length) throw new Error("没有可用模块。请让 AI 严格按提示词输出。");
   const jobTips = (Array.isArray(parsed.interviewPreparation) ? parsed.interviewPreparation : []).slice(0, 5).map((item) => ({
     kind: ["case", "knowledge", "risk"].includes(item?.type) ? item.type : "case",
     topic: String(item?.topic || "重点问题").slice(0, 60),
@@ -1600,7 +1697,7 @@ function updateGptReviewSummary() {
   const selectedRisk = selected.filter((check) => check.dataset.risk === "true").length;
   elements.gptReviewSummary.textContent = checks.length
     ? `已选择 ${selected.length}/${checks.length} 项${selectedRisk ? `，其中 ${selectedRisk} 项需要人工确认` : ""}。`
-    : "GPT 返回内容与当前简历没有可见差异。";
+    : "AI 返回内容与当前简历没有可见差异。";
   elements.applyGptButton.disabled = !selected.length;
   elements.applyGptButton.textContent = selected.length ? `应用 ${selected.length} 项修改` : "请选择修改";
 }
@@ -1665,7 +1762,7 @@ function applySelectedGptChanges() {
     return;
   }
   try {
-    showUndo(`已应用 ${selectedChanges.length} 项 GPT 建议`);
+    showUndo(`已应用 ${selectedChanges.length} 项 AI 建议`);
     const next = clone(state);
     selectedChanges.sort((left, right) => left.phase - right.phase).forEach((change) => change.apply(next));
     state = normalizeState(next);
@@ -2177,6 +2274,7 @@ elements.imageUpload.addEventListener("change", async () => {
 });
 
 elements.addModuleButton.addEventListener("click", () => {
+  showUndo("已添加模块");
   const id = `custom-${Date.now()}`;
   state.modules.push({
     id,
@@ -2193,6 +2291,7 @@ elements.addModuleButton.addEventListener("click", () => {
 elements.duplicateModuleButton.addEventListener("click", () => {
   const index = state.modules.findIndex((item) => item.id === selectedModuleId);
   if (index < 0) return;
+  showUndo(`已复制“${state.modules[index].title}”`);
   const copy = clone(state.modules[index]);
   copy.id = `${copy.id}-copy-${Date.now()}`;
   copy.title = `${copy.title}副本`.slice(0, 60);
@@ -2244,14 +2343,96 @@ document.querySelectorAll('input[name="exportFormat"]').forEach((radio) => radio
 }));
 elements.confirmExportButton.addEventListener("click", confirmExport);
 
+elements.zoomOutButton.addEventListener("click", () => setPreviewZoom(previewZoom - 0.25));
+elements.zoomInButton.addEventListener("click", () => setPreviewZoom(previewZoom + 0.25));
+elements.zoomResetButton.addEventListener("click", resetPreviewZoom);
+
+elements.paperViewport.addEventListener("wheel", (event) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  event.preventDefault();
+  setPreviewZoom(previewZoom + (event.deltaY < 0 ? 0.15 : -0.15), previewAnchorFromEvent(event));
+}, { passive: false });
+
+elements.paperViewport.addEventListener("touchstart", (event) => {
+  previewPointerMoved = false;
+  if (event.touches.length === 2) {
+    const midpoint = touchMidpoint(event.touches);
+    pinchStart = {
+      distance: touchDistance(event.touches),
+      zoom: previewZoom,
+      pan: { ...previewPan },
+      midpoint,
+    };
+    panStart = null;
+    return;
+  }
+  if (event.touches.length === 1 && previewZoom > 1.01 && !event.target.closest("button, input, textarea, select")) {
+    panStart = {
+      x: event.touches[0].clientX,
+      y: event.touches[0].clientY,
+      pan: { ...previewPan },
+    };
+  }
+}, { passive: true });
+
+elements.paperViewport.addEventListener("touchmove", (event) => {
+  if (event.touches.length === 2 && pinchStart) {
+    event.preventDefault();
+    previewPointerMoved = true;
+    const midpoint = touchMidpoint(event.touches);
+    const nextZoom = clampPreviewZoom(pinchStart.zoom * touchDistance(event.touches) / Math.max(1, pinchStart.distance));
+    const ratio = nextZoom / pinchStart.zoom;
+    previewZoom = nextZoom;
+    previewPan.x = midpoint.x - (pinchStart.midpoint.x - pinchStart.pan.x) * ratio;
+    previewPan.y = midpoint.y - (pinchStart.midpoint.y - pinchStart.pan.y) * ratio;
+    updatePreviewSize();
+    return;
+  }
+  if (event.touches.length === 1 && panStart && previewZoom > 1.01) {
+    const dx = event.touches[0].clientX - panStart.x;
+    const dy = event.touches[0].clientY - panStart.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) previewPointerMoved = true;
+    if (!previewPointerMoved) return;
+    event.preventDefault();
+    previewPan.x = panStart.pan.x + dx;
+    previewPan.y = panStart.pan.y + dy;
+    updatePreviewSize();
+  }
+}, { passive: false });
+
+elements.paperViewport.addEventListener("touchend", (event) => {
+  if (event.touches.length < 2) pinchStart = null;
+  if (!event.touches.length) panStart = null;
+});
+
+elements.resumePrintRoot.addEventListener("click", (event) => {
+  if (previewPointerMoved) {
+    previewPointerMoved = false;
+    return;
+  }
+  const module = event.target.closest(".resume-module[data-module-id]");
+  if (module) selectModuleFromPreview(module.dataset.moduleId);
+  else if (event.target.closest(".resume-header")) selectBasicsFromPreview();
+});
+
+elements.resumePrintRoot.addEventListener("keydown", (event) => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const module = event.target.closest(".resume-module[data-module-id]");
+  if (!module && !event.target.closest(".resume-header")) return;
+  event.preventDefault();
+  if (module) selectModuleFromPreview(module.dataset.moduleId);
+  else selectBasicsFromPreview();
+});
+
 function showUndo(message) {
   undoState = clone(state);
   elements.undoMessage.textContent = message;
   elements.undoBar.hidden = false;
+  elements.panelUndoButton.disabled = false;
   window.clearTimeout(undoTimer);
   undoTimer = window.setTimeout(() => {
     elements.undoBar.hidden = true;
-    undoState = null;
+    elements.panelUndoButton.disabled = !undoState;
   }, 6000);
 }
 
@@ -2261,14 +2442,18 @@ elements.resetButton.addEventListener("click", () => {
   selectedModuleId = state.modules[0].id;
   renderAll();
 });
-elements.undoButton.addEventListener("click", () => {
+function restoreUndoState() {
   if (!undoState) return;
   state = undoState;
   undoState = null;
   selectedModuleId = state.modules[0]?.id ?? null;
   elements.undoBar.hidden = true;
+  elements.panelUndoButton.disabled = true;
   renderAll();
-});
+}
+
+elements.undoButton.addEventListener("click", restoreUndoState);
+elements.panelUndoButton.addEventListener("click", restoreUndoState);
 
 window.addEventListener("resize", updatePreviewSize);
 if ("ResizeObserver" in window) new ResizeObserver(updatePreviewSize).observe(elements.resumePrintRoot);
