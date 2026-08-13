@@ -82,10 +82,6 @@ const elements = {
   exportButton: document.querySelector("#exportButton"),
   fontScale: document.querySelector("#fontScale"),
   density: document.querySelector("#density"),
-  zoomOutButton: document.querySelector("#zoomOutButton"),
-  zoomResetButton: document.querySelector("#zoomResetButton"),
-  zoomInButton: document.querySelector("#zoomInButton"),
-  zoomValue: document.querySelector("#zoomValue"),
   resumeStyle: document.querySelector("#resumeStyle"),
   resumePalette: document.querySelector("#resumePalette"),
   paletteSwatches: document.querySelector("#paletteSwatches"),
@@ -174,10 +170,6 @@ let undoState = null;
 let undoTimer = null;
 let saveTimer = null;
 let pendingGptReview = null;
-let previewZoom = 1;
-let previewPan = { x: 0, y: 0 };
-let pinchStart = null;
-let previewPointerMoved = false;
 let resumeFitScale = 1;
 let layoutWidths = loadLayoutWidths();
 
@@ -583,18 +575,16 @@ function updatePreviewSize() {
   const heightScale = isDesktopWorkbench ? Math.max(0.28, (elements.paperViewport.clientHeight - 8) / rawHeight) : 1;
   const scale = Math.min(1, Math.max(0.28, widthScale), heightScale);
   elements.paperViewport.style.setProperty("--preview-scale", scale.toFixed(3));
-  elements.paperViewport.style.setProperty("--user-zoom", previewZoom.toFixed(3));
-  elements.paperViewport.style.setProperty("--preview-pan-x", `${previewPan.x}px`);
-  elements.paperViewport.style.setProperty("--preview-pan-y", `${previewPan.y}px`);
-  elements.zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
-  elements.paperViewport.classList.toggle("is-zoomed", previewZoom > 1.01);
   if (!isDesktopWorkbench) elements.paperViewport.style.height = `${Math.ceil(rawHeight * scale + 8)}px`;
   const fitPercent = Math.round(resumeFitScale * 100);
   const contentHeight = elements.resumePrintRoot.querySelector(".resume-content")?.scrollHeight || 0;
   const stillOverflowing = contentHeight * resumeFitScale > 995;
   elements.pageIndicator.textContent = stillOverflowing
-    ? `预计导出：1 页 · 已压缩至可读下限 ${fitPercent}%，超出内容将裁切`
-    : resumeFitScale < 0.995 ? `预计导出：1 页 · 内容已自动压缩至 ${fitPercent}%` : "预计导出：1 页";
+    ? `1 页 · ${fitPercent}% · 超量裁切`
+    : resumeFitScale < 0.995 ? `1 页 · 自动 ${fitPercent}%` : "1 页";
+  elements.pageIndicator.title = stillOverflowing
+    ? `预计导出 1 页；内容已压缩至可读下限 ${fitPercent}%，超出内容将裁切`
+    : resumeFitScale < 0.995 ? `预计导出 1 页；内容已自动压缩至 ${fitPercent}%` : "预计导出 1 页";
   elements.pageIndicator.classList.toggle("is-fitted", resumeFitScale < 0.995);
 }
 
@@ -716,59 +706,6 @@ function selectBasicsFromPreview() {
   if (window.matchMedia("(min-width: 70rem)").matches) elements.modulePanel.scrollTo({ top: Math.max(0, elements.basicsEditor.offsetTop - 84), behavior: "smooth" });
   else elements.basicsEditor.scrollIntoView({ behavior: "smooth", block: "start" });
   window.setTimeout(() => elements.basicName.focus({ preventScroll: true }), 220);
-}
-
-function clampPreviewZoom(value) {
-  return Math.min(2.5, Math.max(0.75, value));
-}
-
-function setPreviewZoom(value, anchor = null) {
-  const nextZoom = clampPreviewZoom(value);
-  if (anchor && previewZoom) {
-    const ratio = nextZoom / previewZoom;
-    previewPan.x = anchor.x - (anchor.x - previewPan.x) * ratio;
-    previewPan.y = anchor.y - (anchor.y - previewPan.y) * ratio;
-  }
-  previewZoom = nextZoom;
-  if (Math.abs(previewZoom - 1) < 0.01) {
-    previewZoom = 1;
-    previewPan = { x: 0, y: 0 };
-  }
-  updatePreviewSize();
-}
-
-function clampPreviewPan() {
-  const width = elements.paperViewport.clientWidth;
-  const height = elements.paperViewport.clientHeight;
-  const scaledWidth = 794 * Number.parseFloat(getComputedStyle(elements.paperViewport).getPropertyValue("--preview-scale") || "1") * previewZoom;
-  const scaledHeight = 1123 * Number.parseFloat(getComputedStyle(elements.paperViewport).getPropertyValue("--preview-scale") || "1") * previewZoom;
-  const limitX = Math.max(24, (scaledWidth - width) / 2 + 48);
-  const limitY = Math.max(24, (scaledHeight - height) / 2 + 48);
-  previewPan.x = Math.min(limitX, Math.max(-limitX, previewPan.x));
-  previewPan.y = Math.min(limitY, Math.max(-limitY, previewPan.y));
-}
-
-function resetPreviewZoom() {
-  previewZoom = 1;
-  previewPan = { x: 0, y: 0 };
-  updatePreviewSize();
-}
-
-function touchDistance(touches) {
-  return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
-}
-
-function touchMidpoint(touches) {
-  const rect = elements.paperViewport.getBoundingClientRect();
-  return {
-    x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
-    y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top,
-  };
-}
-
-function previewAnchorFromEvent(event) {
-  const rect = elements.paperViewport.getBoundingClientRect();
-  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 }
 
 function renderModuleEditor() {
@@ -899,20 +836,27 @@ function fieldWithInput(labelText, value, onInput, options = {}) {
   return label;
 }
 
-function fieldWithSelect(labelText, value, choices, onChange) {
-  const label = create("label", "structured-field");
-  label.append(create("span", "", labelText));
-  const select = document.createElement("select");
-  choices.forEach(([choiceValue, choiceLabel]) => {
-    const option = document.createElement("option");
-    option.value = choiceValue;
-    option.textContent = choiceLabel;
-    option.selected = choiceValue === value;
-    select.append(option);
+function createMetricIconPicker(value, onChange) {
+  const fieldset = create("fieldset", "metric-icon-picker");
+  fieldset.append(create("legend", "", "图案"));
+  const options = create("div", "metric-icon-picker__options");
+  Object.entries(metricIconLabels).forEach(([iconName, label]) => {
+    const button = create("button", "metric-icon-choice");
+    button.type = "button";
+    button.title = label;
+    button.setAttribute("aria-label", `使用${label}图案`);
+    button.setAttribute("aria-pressed", String(iconName === value));
+    button.append(createMetricIcon(iconName));
+    button.addEventListener("click", () => {
+      onChange(iconName);
+      options.querySelectorAll(".metric-icon-choice").forEach((choice) => {
+        choice.setAttribute("aria-pressed", String(choice === button));
+      });
+    });
+    options.append(button);
   });
-  select.addEventListener("change", () => onChange(select.value));
-  label.append(select);
-  return label;
+  fieldset.append(options);
+  return fieldset;
 }
 
 function renderStructuredEditor(module) {
@@ -992,7 +936,7 @@ function renderStructuredEditor(module) {
       const fields = create("div", "metric-editor-fields");
       fields.classList.toggle("is-iconless", !module.options.metricIconsVisible);
       if (module.options.metricIconsVisible) {
-        fields.append(fieldWithSelect("图案", item.icon, Object.entries(metricIconLabels), (value) => {
+        fields.append(createMetricIconPicker(item.icon, (value) => {
           item.icon = metricIconNames.has(value) ? value : "trend";
           renderResume();
           scheduleSave();
@@ -2421,55 +2365,7 @@ document.querySelectorAll('input[name="exportFormat"]').forEach((radio) => radio
 }));
 elements.confirmExportButton.addEventListener("click", confirmExport);
 
-elements.zoomOutButton.addEventListener("click", () => setPreviewZoom(previewZoom - 0.25));
-elements.zoomInButton.addEventListener("click", () => setPreviewZoom(previewZoom + 0.25));
-elements.zoomResetButton.addEventListener("click", resetPreviewZoom);
-
-elements.paperViewport.addEventListener("wheel", (event) => {
-  if (!event.ctrlKey && !event.metaKey) return;
-  event.preventDefault();
-  setPreviewZoom(previewZoom + (event.deltaY < 0 ? 0.15 : -0.15), previewAnchorFromEvent(event));
-}, { passive: false });
-
-elements.paperViewport.addEventListener("touchstart", (event) => {
-  previewPointerMoved = false;
-  if (event.touches.length === 2) {
-    const midpoint = touchMidpoint(event.touches);
-    pinchStart = {
-      distance: touchDistance(event.touches),
-      zoom: previewZoom,
-      pan: { ...previewPan },
-      midpoint,
-    };
-  }
-}, { passive: true });
-
-elements.paperViewport.addEventListener("touchmove", (event) => {
-  if (event.touches.length === 2 && pinchStart) {
-    event.preventDefault();
-    previewPointerMoved = true;
-    const midpoint = touchMidpoint(event.touches);
-    const rawRatio = touchDistance(event.touches) / Math.max(1, pinchStart.distance);
-    const dampedRatio = 1 + (rawRatio - 1) * 0.35;
-    const nextZoom = clampPreviewZoom(pinchStart.zoom * dampedRatio);
-    const ratio = nextZoom / pinchStart.zoom;
-    previewZoom = nextZoom;
-    previewPan.x = midpoint.x - (pinchStart.midpoint.x - pinchStart.pan.x) * ratio;
-    previewPan.y = midpoint.y - (pinchStart.midpoint.y - pinchStart.pan.y) * ratio;
-    clampPreviewPan();
-    updatePreviewSize();
-  }
-}, { passive: false });
-
-elements.paperViewport.addEventListener("touchend", (event) => {
-  if (event.touches.length < 2) pinchStart = null;
-});
-
 elements.resumePrintRoot.addEventListener("click", (event) => {
-  if (previewPointerMoved) {
-    previewPointerMoved = false;
-    return;
-  }
   const module = event.target.closest(".resume-module[data-module-id]");
   if (module) selectModuleFromPreview(module.dataset.moduleId);
   else if (event.target.closest(".resume-header")) selectBasicsFromPreview();
