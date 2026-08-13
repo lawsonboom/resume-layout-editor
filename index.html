@@ -7,7 +7,7 @@
     <title>简历排版工作台</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23984936'/%3E%3Cpath d='M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./tokens.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260813-single-ai-resize-v6" />
+    <link rel="stylesheet" href="./styles.css?v=20260813-pdf-avatar-gesture-v7" />
   </head>
   <body>
     <a class="skip-link" href="#workspace">跳到编辑区</a>
@@ -182,6 +182,8 @@
                 <option value="circle">圆形</option>
                 <option value="rounded">圆角方形</option>
               </select>
+              <label class="avatar-size-control" for="avatarSize">头像大小 <output id="avatarSizeValue" for="avatarSize">92 px</output></label>
+              <input id="avatarSize" type="range" min="64" max="136" step="4" value="92" />
             </div>
           </div>
           <div class="field-grid">
@@ -347,6 +349,6 @@
       <button id="undoButton" type="button">撤销</button>
     </div>
 
-    <script type="module" src="./app.js?v=20260813-single-ai-resize-v6"></script>
+    <script type="module" src="./app.js?v=20260813-pdf-avatar-gesture-v7"></script>
   </body>
 </html>

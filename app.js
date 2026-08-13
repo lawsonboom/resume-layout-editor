@@ -20,7 +20,7 @@ const metricIconLabels = {
 };
 
 const defaultState = {
-  avatar: { src: "", shape: "circle" },
+  avatar: { src: "", shape: "circle", size: 92 },
   basics: {
     name: "",
     title: "",
@@ -115,6 +115,8 @@ const elements = {
   avatarUpload: document.querySelector("#avatarUpload"),
   avatarStatus: document.querySelector("#avatarStatus"),
   avatarShape: document.querySelector("#avatarShape"),
+  avatarSize: document.querySelector("#avatarSize"),
+  avatarSizeValue: document.querySelector("#avatarSizeValue"),
   removeAvatarButton: document.querySelector("#removeAvatarButton"),
   sortByJobButton: document.querySelector("#sortByJobButton"),
   sortStatus: document.querySelector("#sortStatus"),
@@ -212,6 +214,7 @@ function normalizeState(input) {
   normalized.avatar = {
     src: typeof input.avatar?.src === "string" && input.avatar.src.startsWith("data:image/") ? input.avatar.src : "",
     shape: input.avatar?.shape === "rounded" ? "rounded" : "circle",
+    size: Math.min(136, Math.max(64, Number(input.avatar?.size) || 92)),
   };
   normalized.basics = { ...normalized.basics, ...(input.basics ?? {}) };
   normalized.modules = normalizeModules(input.modules);
@@ -335,6 +338,9 @@ function syncFormFromState() {
   elements.basicEmail.value = state.basics.email;
   elements.basicEducation.value = state.basics.education;
   elements.avatarShape.value = state.avatar.shape;
+  elements.avatarSize.value = String(state.avatar.size);
+  elements.avatarSizeValue.value = `${state.avatar.size} px`;
+  elements.avatarPreview.style.setProperty("--avatar-editor-size", `${Math.min(112, state.avatar.size)}px`);
   elements.removeAvatarButton.disabled = !state.avatar.src;
   elements.avatarUploadButton.textContent = state.avatar.src ? "更换头像" : "选择头像";
   elements.avatarPreview.setAttribute("aria-label", state.avatar.src ? "更换头像" : "插入头像");
@@ -516,6 +522,7 @@ function renderResume() {
   const content = create("div", "resume-content");
   root.append(content);
   root.style.setProperty("--resume-scale", state.settings.fontScale);
+  root.style.setProperty("--resume-avatar-size", `${state.avatar.size}px`);
   root.dataset.density = state.settings.density;
   root.dataset.style = state.settings.style;
   root.dataset.palette = state.settings.palette;
@@ -728,6 +735,17 @@ function setPreviewZoom(value, anchor = null) {
     previewPan = { x: 0, y: 0 };
   }
   updatePreviewSize();
+}
+
+function clampPreviewPan() {
+  const width = elements.paperViewport.clientWidth;
+  const height = elements.paperViewport.clientHeight;
+  const scaledWidth = 794 * Number.parseFloat(getComputedStyle(elements.paperViewport).getPropertyValue("--preview-scale") || "1") * previewZoom;
+  const scaledHeight = 1123 * Number.parseFloat(getComputedStyle(elements.paperViewport).getPropertyValue("--preview-scale") || "1") * previewZoom;
+  const limitX = Math.max(24, (scaledWidth - width) / 2 + 48);
+  const limitY = Math.max(24, (scaledHeight - height) / 2 + 48);
+  previewPan.x = Math.min(limitX, Math.max(-limitX, previewPan.x));
+  previewPan.y = Math.min(limitY, Math.max(-limitY, previewPan.y));
 }
 
 function resetPreviewZoom() {
@@ -1927,7 +1945,7 @@ function openPreflightDialog() {
   const checks = buildPreflightChecks();
   renderPreflightChecks(checks);
   if (typeof elements.preflightDialog.showModal === "function") elements.preflightDialog.showModal();
-  else window.print();
+  else confirmExport();
 }
 
 function downloadBlob(blob, filename) {
@@ -1938,7 +1956,7 @@ function downloadBlob(blob, filename) {
   document.body.append(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  window.setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 async function imageSourceToDataUrl(source) {
@@ -1954,7 +1972,7 @@ async function imageSourceToDataUrl(source) {
   });
 }
 
-async function exportResumeAsJpg() {
+async function renderResumeJpegBlob() {
   const root = elements.resumePrintRoot;
   const clonedRoot = root.cloneNode(true);
   const sourceImages = [...root.querySelectorAll("img")];
@@ -1991,28 +2009,94 @@ async function exportResumeAsJpg() {
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
   if (!blob) throw new Error("JPG 生成失败，请重试。");
+  return blob;
+}
+
+async function exportResumeAsJpg() {
+  const blob = await renderResumeJpegBlob();
   const safeName = (state.basics.name || "简历").replace(/[\\/:*?"<>|]/g, "-");
   downloadBlob(blob, `${safeName}-简历.jpg`);
 }
 
+function base64ToBytes(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+function jpegBytesToOnePagePdf(jpegBytes, imageWidth, imageHeight) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  let length = 0;
+  const offsets = [0];
+  const pushText = (value) => {
+    const bytes = encoder.encode(value);
+    chunks.push(bytes);
+    length += bytes.length;
+  };
+  const pushBytes = (bytes) => {
+    chunks.push(bytes);
+    length += bytes.length;
+  };
+  pushText("%PDF-1.4\n% resume-export\n");
+  const object = (id, body) => {
+    offsets[id] = length;
+    pushText(`${id} 0 obj\n${body}\nendobj\n`);
+  };
+  object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  object(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+  offsets[4] = length;
+  pushText(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpegBytes.length} >>\nstream\n`);
+  pushBytes(jpegBytes);
+  pushText("\nendstream\nendobj\n");
+  const content = "q\n595.28 0 0 841.89 0 0 cm\n/Im0 Do\nQ\n";
+  object(5, `<< /Length ${encoder.encode(content).length} >>\nstream\n${content}endstream`);
+  const xref = length;
+  pushText("xref\n0 6\n0000000000 65535 f \n");
+  for (let id = 1; id <= 5; id += 1) pushText(`${String(offsets[id]).padStart(10, "0")} 00000 n \n`);
+  pushText(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
+  const output = new Uint8Array(length);
+  let cursor = 0;
+  chunks.forEach((chunk) => { output.set(chunk, cursor); cursor += chunk.length; });
+  return output;
+}
+
+async function exportResumeAsPdf() {
+  const capturedBlob = await renderResumeJpegBlob();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = reject;
+    reader.readAsDataURL(capturedBlob);
+  });
+  const jpegBytes = base64ToBytes(dataUrl.split(",")[1]);
+  const pdfBytes = jpegBytesToOnePagePdf(jpegBytes, 1588, 2246);
+  const safeName = (state.basics.name || "简历").replace(/[\\/:*?"<>|]/g, "-");
+  downloadBlob(new Blob([pdfBytes], { type: "application/pdf" }), `${safeName}-简历.pdf`);
+}
+
 async function confirmExport() {
-  elements.preflightDialog.close();
-  if (selectedExportFormat() === "jpg") {
-    elements.exportButton.disabled = true;
-    elements.saveState.textContent = "正在生成 JPG…";
-    try {
+  if (elements.preflightDialog.open) elements.preflightDialog.close();
+  elements.exportButton.disabled = true;
+  const format = selectedExportFormat();
+  elements.saveState.textContent = `正在生成 ${format.toUpperCase()}…`;
+  try {
+    if (format === "jpg") {
       await exportResumeAsJpg();
       elements.saveState.textContent = "JPG 已导出";
-    } catch (error) {
-      elements.saveState.textContent = error instanceof Error ? error.message : "JPG 导出失败";
-      console.error(error);
-    } finally {
-      elements.exportButton.disabled = false;
-      window.setTimeout(() => { elements.saveState.textContent = "已保存在本机"; }, 2200);
+    } else {
+      await exportResumeAsPdf();
+      elements.saveState.textContent = "PDF 已导出";
     }
-    return;
+  } catch (error) {
+    elements.saveState.textContent = error instanceof Error ? error.message : `${format.toUpperCase()} 导出失败`;
+    console.error(error);
+  } finally {
+    elements.exportButton.disabled = false;
+    window.setTimeout(() => { elements.saveState.textContent = "已保存在本机"; }, 2200);
   }
-  window.requestAnimationFrame(() => window.print());
 }
 
 async function extractPdfText(file) {
@@ -2204,6 +2288,14 @@ elements.avatarShape.addEventListener("change", () => {
   state.avatar.shape = elements.avatarShape.value === "rounded" ? "rounded" : "circle";
   renderAll();
 });
+elements.avatarSize.addEventListener("input", () => {
+  state.avatar.size = Math.min(136, Math.max(64, Number(elements.avatarSize.value) || 92));
+  elements.avatarSizeValue.value = `${state.avatar.size} px`;
+  elements.avatarPreview.style.setProperty("--avatar-editor-size", `${Math.min(112, state.avatar.size)}px`);
+  renderResume();
+  scheduleSave();
+});
+elements.avatarSize.addEventListener("change", scheduleSave);
 elements.removeAvatarButton.addEventListener("click", () => {
   if (!state.avatar.src) return;
   showUndo("已移除头像");
@@ -2357,12 +2449,14 @@ elements.paperViewport.addEventListener("touchmove", (event) => {
     event.preventDefault();
     previewPointerMoved = true;
     const midpoint = touchMidpoint(event.touches);
-    const distanceRatio = touchDistance(event.touches) / Math.max(1, pinchStart.distance);
-    const nextZoom = clampPreviewZoom(pinchStart.zoom * distanceRatio);
+    const rawRatio = touchDistance(event.touches) / Math.max(1, pinchStart.distance);
+    const dampedRatio = 1 + (rawRatio - 1) * 0.35;
+    const nextZoom = clampPreviewZoom(pinchStart.zoom * dampedRatio);
     const ratio = nextZoom / pinchStart.zoom;
     previewZoom = nextZoom;
     previewPan.x = midpoint.x - (pinchStart.midpoint.x - pinchStart.pan.x) * ratio;
     previewPan.y = midpoint.y - (pinchStart.midpoint.y - pinchStart.pan.y) * ratio;
+    clampPreviewPan();
     updatePreviewSize();
   }
 }, { passive: false });

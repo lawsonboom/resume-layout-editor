@@ -899,9 +899,9 @@ textarea {
 .resume-identity { min-width: 0; }
 
 .resume-avatar {
-  width: 92px;
-  height: 92px;
-  flex: 0 0 92px;
+  width: var(--resume-avatar-size, 92px);
+  height: var(--resume-avatar-size, 92px);
+  flex: 0 0 var(--resume-avatar-size, 92px);
   margin: 0;
   overflow: hidden;
   border: 2px solid var(--resume-secondary);
@@ -1156,9 +1156,9 @@ textarea {
 }
 
 .resume-sidebar .resume-avatar {
-  width: 104px;
-  height: 104px;
-  flex-basis: 104px;
+  width: var(--resume-avatar-size, 92px);
+  height: var(--resume-avatar-size, 92px);
+  flex-basis: var(--resume-avatar-size, 92px);
 }
 
 .resume-sidebar .resume-name {
@@ -1197,7 +1197,11 @@ textarea {
 .resume-sheet[data-style="compact"] .resume-header { padding-block-end: 16px; }
 .resume-sheet[data-style="compact"] .resume-name { font-size: calc(33px * var(--resume-scale)); }
 .resume-sheet[data-style="compact"] .resume-title { margin-block: 5px 10px; }
-.resume-sheet[data-style="compact"] .resume-avatar { width: 76px; height: 76px; flex-basis: 76px; }
+.resume-sheet[data-style="compact"] .resume-avatar {
+  width: var(--resume-avatar-size, 76px);
+  height: var(--resume-avatar-size, 76px);
+  flex-basis: var(--resume-avatar-size, 76px);
+}
 .resume-sheet[data-style="compact"] .resume-module h2 { margin-block-end: 8px; }
 .resume-sheet[data-style="compact"] .resume-list { gap: 5px; }
 .resume-sheet[data-style="compact"] .experience-list { gap: 11px; }
@@ -1311,8 +1315,8 @@ textarea {
 .avatar-editor__preview {
   display: grid;
   place-items: center;
-  width: 92px;
-  height: 92px;
+  width: var(--avatar-editor-size, 92px);
+  height: var(--avatar-editor-size, 92px);
   overflow: hidden;
   border: 1px dashed var(--color-line-strong);
   border-radius: 50%;
@@ -1346,6 +1350,23 @@ textarea {
   margin-block: var(--space-3) var(--space-1);
   color: var(--color-ink-muted);
   font-size: var(--text-xs);
+}
+
+.avatar-size-control {
+  display: flex !important;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.avatar-size-control output {
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+#avatarSize {
+  width: 100%;
+  min-height: 36px;
+  accent-color: var(--color-accent);
 }
 
 .field-grid {
