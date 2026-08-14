@@ -5,6 +5,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("./vendor/pdf.worker.min.mjs", 
 const STORAGE_KEY = "resume-layout-editor-v2-blank";
 const LAYOUT_KEY = "resume-layout-editor-layout-v1";
 const LEGACY_STORAGE_KEYS = ["resume-layout-editor-v1"];
+const OCR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/tesseract.min.js";
+const OCR_IMAGE_LIMIT = 20;
+const OCR_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
 const allowedModuleTypes = new Set(["text", "list", "metrics", "experience", "images"]);
 const allowedStyles = new Set(["classic", "sidebar", "compact"]);
 const allowedPalettes = new Set(["coffee", "cobalt", "graphite"]);
@@ -77,6 +80,9 @@ const elements = {
   fileStatus: document.querySelector("#fileStatus"),
   resumeText: document.querySelector("#resumeText"),
   jobText: document.querySelector("#jobText"),
+  jobOcrButton: document.querySelector("#jobOcrButton"),
+  jobImageFiles: document.querySelector("#jobImageFiles"),
+  jobOcrStatus: document.querySelector("#jobOcrStatus"),
   gptFlowButton: document.querySelector("#gptFlowButton"),
   mobileGptButton: document.querySelector("#mobileGptButton"),
   exportButton: document.querySelector("#exportButton"),
@@ -172,6 +178,7 @@ let saveTimer = null;
 let pendingGptReview = null;
 let resumeFitScale = 1;
 let layoutWidths = loadLayoutWidths();
+let ocrLibraryPromise = null;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -525,7 +532,7 @@ function renderResume() {
     const emptyState = create("div", "resume-empty-state");
     emptyState.append(
       create("strong", "", "从右侧开始填写"),
-      create("p", "", "也可以先上传 PDF 或 TXT，再逐项整理成 A4 简历。"),
+      create("p", "", "也可以先上传 PDF、TXT 或图片，再逐项整理成 A4 简历。"),
     );
     content.append(emptyState);
     requestAnimationFrame(fitResumeToOnePage);
@@ -2074,24 +2081,250 @@ async function extractPdfText(file) {
   return pages.join("\n\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-async function handleResumeFile(file) {
-  if (!file) return;
+function isOcrImage(file) {
+  return /^image\/(png|jpeg|webp|bmp)$/i.test(file.type) || /\.(png|jpe?g|webp|bmp)$/i.test(file.name);
+}
+
+function sortImageFiles(files) {
+  return [...files].sort((first, second) => first.name.localeCompare(second.name, "zh-CN", { numeric: true, sensitivity: "base" }));
+}
+
+function validateOcrImages(files) {
+  const images = sortImageFiles(files);
+  if (!images.length) throw new Error("请选择 JPG、PNG、WebP 或 BMP 图片。");
+  if (images.length > OCR_IMAGE_LIMIT) throw new Error(`一次最多识别 ${OCR_IMAGE_LIMIT} 张图片。`);
+  const unsupported = images.find((file) => !isOcrImage(file));
+  if (unsupported) throw new Error(`${unsupported.name} 不是支持的图片格式。`);
+  const oversized = images.find((file) => file.size > OCR_IMAGE_MAX_BYTES);
+  if (oversized) throw new Error(`${oversized.name} 超过 15MB，请先压缩后再识别。`);
+  return images;
+}
+
+function ensureOcrLibrary() {
+  if (window.Tesseract?.createWorker) return Promise.resolve(window.Tesseract);
+  if (ocrLibraryPromise) return ocrLibraryPromise;
+  ocrLibraryPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    const timeout = window.setTimeout(() => reject(new Error("文字识别组件加载超时，请检查网络后重试。")), 30000);
+    script.src = OCR_SCRIPT_URL;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.onload = () => {
+      window.clearTimeout(timeout);
+      if (window.Tesseract?.createWorker) resolve(window.Tesseract);
+      else reject(new Error("文字识别组件未正确加载，请刷新页面重试。"));
+    };
+    script.onerror = () => {
+      window.clearTimeout(timeout);
+      reject(new Error("文字识别组件加载失败，请检查网络后重试。"));
+    };
+    document.head.append(script);
+  }).catch((error) => {
+    ocrLibraryPromise = null;
+    throw error;
+  });
+  return ocrLibraryPromise;
+}
+
+function cleanOcrText(text) {
+  return String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+/g, " ").replace(/([\u3400-\u9fff]) +(?=[\u3400-\u9fff])/g, "$1").trim())
+    .filter(Boolean)
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function comparableOcrLine(line) {
+  return String(line || "").toLowerCase().replace(/[\s\p{P}\p{S}]/gu, "");
+}
+
+function ocrLineSimilarity(first, second) {
+  const a = comparableOcrLine(first);
+  const b = comparableOcrLine(second);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length > b.length ? a : b;
+  if (shorter.length >= 6 && longer.includes(shorter) && shorter.length / longer.length >= 0.72) return 0.94;
+  const pairs = (value) => Array.from({ length: Math.max(0, value.length - 1) }, (_, index) => value.slice(index, index + 2));
+  const firstPairs = pairs(a);
+  const secondPairs = pairs(b);
+  if (!firstPairs.length || !secondPairs.length) return 0;
+  const remaining = [...secondPairs];
+  let matches = 0;
+  firstPairs.forEach((pair) => {
+    const matchIndex = remaining.indexOf(pair);
+    if (matchIndex >= 0) {
+      matches += 1;
+      remaining.splice(matchIndex, 1);
+    }
+  });
+  return (2 * matches) / (firstPairs.length + secondPairs.length);
+}
+
+function findOcrLineOverlap(existingLines, nextLines) {
+  const maximum = Math.min(14, existingLines.length, nextLines.length);
+  for (let size = maximum; size >= 1; size -= 1) {
+    const previous = existingLines.slice(-size);
+    const incoming = nextLines.slice(0, size);
+    const scores = previous.map((line, index) => ocrLineSimilarity(line, incoming[index]));
+    const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const minimum = Math.min(...scores);
+    const singleLineIsStrong = size === 1 && comparableOcrLine(previous[0]).length >= 8 && average >= 0.92;
+    if (singleLineIsStrong || (size >= 2 && average >= 0.8 && minimum >= 0.62)) return size;
+  }
+  return 0;
+}
+
+function mergeOcrPages(pageTexts) {
+  const merged = [];
+  let removed = 0;
+  pageTexts.forEach((pageText) => {
+    const incoming = cleanOcrText(pageText).split("\n").filter(Boolean);
+    const overlap = findOcrLineOverlap(merged, incoming);
+    removed += overlap;
+    incoming.slice(overlap).forEach((line) => {
+      const comparable = comparableOcrLine(line);
+      const duplicate = comparable.length >= 6 && merged.slice(-36).some((previous) => ocrLineSimilarity(previous, line) >= 0.97);
+      if (duplicate) removed += 1;
+      else merged.push(line);
+    });
+  });
+  return { text: merged.join("\n").trim(), removed };
+}
+
+async function prepareImageForOcr(file) {
+  let image;
+  let release = () => {};
+  if (typeof createImageBitmap === "function") {
+    image = await createImageBitmap(file, { imageOrientation: "from-image" });
+    release = () => image.close?.();
+  } else {
+    const url = URL.createObjectURL(file);
+    image = await new Promise((resolve, reject) => {
+      const candidate = new Image();
+      candidate.onload = () => resolve(candidate);
+      candidate.onerror = () => reject(new Error(`${file.name} 无法读取，请换一张图片。`));
+      candidate.src = url;
+    });
+    release = () => URL.revokeObjectURL(url);
+  }
+  try {
+    const width = image.width;
+    const height = image.height;
+    if (!width || !height) throw new Error(`${file.name} 的图片尺寸无效。`);
+    const readabilityScale = width < 1400 ? 1400 / width : 1;
+    const memoryScale = 3600 / Math.max(width, height);
+    const scale = Math.max(0.35, Math.min(3.5, readabilityScale, memoryScale));
+    if (Math.abs(scale - 1) < 0.05 && file.type !== "image/png") return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器无法预处理图片。");
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
+    if (!blob) throw new Error("图片预处理失败，请重试。");
+    return blob;
+  } finally {
+    release();
+  }
+}
+
+async function recognizeImageBatch(files, updateStatus) {
+  const images = validateOcrImages(files);
+  updateStatus("正在加载中文识别模型，首次使用会稍慢…");
+  const Tesseract = await ensureOcrLibrary();
+  let currentIndex = 0;
+  const worker = await Tesseract.createWorker(["chi_sim", "eng"], 1, {
+    logger: (message) => {
+      if (message.status !== "recognizing text") return;
+      const progress = Math.max(1, Math.round((message.progress || 0) * 100));
+      updateStatus(`正在识别第 ${currentIndex + 1}/${images.length} 张 · ${progress}%`);
+    },
+  });
+  try {
+    await worker.setParameters({ preserve_interword_spaces: "1", user_defined_dpi: "300" });
+    const pages = [];
+    for (currentIndex = 0; currentIndex < images.length; currentIndex += 1) {
+      updateStatus(`正在识别第 ${currentIndex + 1}/${images.length} 张…`);
+      const preparedImage = await prepareImageForOcr(images[currentIndex]);
+      const result = await worker.recognize(preparedImage, { rotateAuto: true });
+      pages.push(result.data.text || "");
+    }
+    const merged = mergeOcrPages(pages);
+    if (!merged.text) throw new Error("没有识别到文字，请换一张更清晰、文字更大的图片。");
+    return { ...merged, count: images.length };
+  } finally {
+    await worker.terminate();
+  }
+}
+
+function setJobText(text) {
+  elements.jobText.value = text;
+  elements.jobText.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+async function handleResumeFiles(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
   elements.fileStatus.textContent = "正在本地读取…";
+  elements.resumeFile.disabled = true;
   try {
     let text = "";
-    if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
-      text = await extractPdfText(file);
+    let label = "";
+    if (files.every(isOcrImage)) {
+      const result = await recognizeImageBatch(files, (status) => { elements.fileStatus.textContent = status; });
+      text = result.text;
+      label = `${result.count} 张图片`;
+      elements.fileStatus.textContent = `已识别 ${label} · ${text.length} 字${result.removed ? ` · 合并 ${result.removed} 处重复` : ""}`;
+    } else if (files.length > 1) {
+      throw new Error("多文件上传只支持图片；PDF 或 TXT 请单独选择。");
+    } else if (files[0].type === "application/pdf" || files[0].name.toLowerCase().endsWith(".pdf")) {
+      text = await extractPdfText(files[0]);
+      label = files[0].name;
     } else {
-      text = await file.text();
+      text = await files[0].text();
+      label = files[0].name;
     }
-    if (!text.trim()) throw new Error("没有读到文字；这可能是扫描图片 PDF。请先做文字识别，或直接粘贴内容。");
+    if (!text.trim()) throw new Error("没有读到文字；扫描图片 PDF 请先转成图片后识别，或直接粘贴内容。");
     state.sourceText = text;
     elements.resumeText.value = text;
-    elements.fileStatus.textContent = `已读取 ${file.name} · ${text.length} 字`;
+    if (!files.every(isOcrImage)) elements.fileStatus.textContent = `已读取 ${label} · ${text.length} 字`;
     scheduleSave();
   } catch (error) {
     elements.fileStatus.textContent = error instanceof Error ? error.message : "读取失败，请直接粘贴文字。";
     console.error(error);
+  } finally {
+    elements.resumeFile.disabled = false;
+    elements.resumeFile.value = "";
+  }
+}
+
+async function handleJobImages(fileList) {
+  const files = [...(fileList || [])];
+  if (!files.length) return;
+  elements.jobOcrButton.disabled = true;
+  elements.jobOcrButton.setAttribute("aria-busy", "true");
+  try {
+    const result = await recognizeImageBatch(files, (status) => { elements.jobOcrStatus.textContent = status; });
+    const existing = elements.jobText.value.trim();
+    const combined = mergeOcrPages(existing ? [existing, result.text] : [result.text]);
+    setJobText(combined.text);
+    const removed = result.removed + combined.removed;
+    elements.jobOcrStatus.textContent = `已识别 ${result.count} 张 · ${combined.text.length} 字${removed ? ` · 合并 ${removed} 处重复` : ""}`;
+  } catch (error) {
+    elements.jobOcrStatus.textContent = error instanceof Error ? error.message : "识别失败，请重试。";
+    console.error(error);
+  } finally {
+    elements.jobOcrButton.disabled = false;
+    elements.jobOcrButton.removeAttribute("aria-busy");
+    elements.jobImageFiles.value = "";
   }
 }
 
@@ -2145,7 +2378,9 @@ elements.jobText.addEventListener("input", () => {
   renderModuleList();
   scheduleSave();
 });
-elements.resumeFile.addEventListener("change", () => handleResumeFile(elements.resumeFile.files?.[0]));
+elements.resumeFile.addEventListener("change", () => handleResumeFiles(elements.resumeFile.files));
+elements.jobOcrButton.addEventListener("click", () => elements.jobImageFiles.click());
+elements.jobImageFiles.addEventListener("change", () => handleJobImages(elements.jobImageFiles.files));
 ["dragenter", "dragover"].forEach((eventName) => elements.fileDrop.addEventListener(eventName, () => elements.fileDrop.classList.add("is-dragging")));
 ["dragleave", "drop"].forEach((eventName) => elements.fileDrop.addEventListener(eventName, () => elements.fileDrop.classList.remove("is-dragging")));
 

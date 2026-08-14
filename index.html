@@ -7,7 +7,7 @@
     <title>简历排版工作台</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23984936'/%3E%3Cpath d='M9 8h14v3H9zm0 6h14v3H9zm0 6h9v3H9z' fill='white'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./tokens.css" />
-    <link rel="stylesheet" href="./styles.css?v=20260814-compact-toolbar-icons-v8" />
+    <link rel="stylesheet" href="./styles.css?v=20260814-local-ocr-v9" />
   </head>
   <body>
     <a class="skip-link" href="#workspace">跳到编辑区</a>
@@ -38,9 +38,9 @@
         <div class="field-group">
           <label for="resumeFile">上传现有简历</label>
           <div class="file-drop" id="fileDrop">
-            <input id="resumeFile" type="file" accept=".pdf,.txt,text/plain,application/pdf" />
-            <span class="file-drop__title">选择 PDF 或 TXT</span>
-            <span class="file-drop__meta" id="fileStatus">支持文字型 PDF；扫描件需先识别文字</span>
+            <input id="resumeFile" type="file" accept=".pdf,.txt,text/plain,application/pdf,image/png,image/jpeg,image/webp,image/bmp" multiple />
+            <span class="file-drop__title">选择 PDF、TXT 或图片</span>
+            <span class="file-drop__meta" id="fileStatus">图片会在本机识别文字，可一次选择多张</span>
           </div>
         </div>
 
@@ -55,6 +55,11 @@
         <div class="field-group">
           <label for="jobText">招聘需求</label>
           <textarea id="jobText" rows="6" placeholder="粘贴岗位职责、任职要求和加分项。"></textarea>
+          <div class="ocr-action-row">
+            <button class="button button--secondary ocr-action" id="jobOcrButton" type="button">识别招聘截图</button>
+            <input id="jobImageFiles" type="file" accept="image/png,image/jpeg,image/webp,image/bmp" multiple hidden />
+            <span id="jobOcrStatus" class="ocr-status" role="status" aria-live="polite">可多选，按文件名合并重叠文字</span>
+          </div>
         </div>
 
         <section class="ai-rewrite-card" aria-labelledby="aiRewriteHeading">
@@ -342,6 +347,6 @@
       <button id="undoButton" type="button">撤销</button>
     </div>
 
-    <script type="module" src="./app.js?v=20260814-compact-toolbar-icons-v8"></script>
+    <script type="module" src="./app.js?v=20260814-local-ocr-v9"></script>
   </body>
 </html>
